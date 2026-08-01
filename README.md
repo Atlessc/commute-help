@@ -127,12 +127,15 @@ implemented.
 After calculating the normal route:
 
 1. Select **Choose closed road on map**.
-2. Click the exact road segment to close.
-3. Confirm the affected travel direction, or choose both directions.
+2. Click every road section involved in the closure; picking stays active so
+   you can add several sections without reopening the tool.
+3. Select **Done selecting roads**. Both directions are selected by default
+   when available; uncheck a direction for a one-way impact.
 4. Choose a full closure, lanes remaining, or temporary speed in mph.
 5. Set the trip departure and optionally give each road impact a start and end.
-6. Use **Add another road section** as many times as needed.
-7. Select **Compare road impacts**.
+6. Give the plan a name and use **Save closure plan** to store the trip, road
+   sections, directions, impacts, and schedules directly in shared SQLite.
+7. Select **Compare road impacts** when you are ready to calculate the route.
 
 Selected sections are highlighted on the map and each direction is labeled in
 plain language. The backend removes fully closed directed edges, applies a
@@ -177,11 +180,19 @@ historical profile is selected; it does not change route selection.
 
 ## Estimate arrival reliability
 
-After calculating a route, use **How early should you leave?** to choose an
-arrive-by time, arrival buffer, confidence target, and traffic evidence. The
-result reports median, p85, p90, p95, likely range, on-time probability, latest
-safe departure, and how the probability changes when leaving 5, 10, or 15
-minutes earlier.
+After calculating a route, the trip-timing panel supports two questions:
+
+- **I need to arrive by** accepts an arrival deadline, buffer, confidence
+  target, and traffic evidence. It reports the latest safe departure, on-time
+  probability, travel-time percentiles, and the benefit of leaving 5, 10, or
+  15 minutes earlier.
+- **I want to leave at** accepts a departure/start time and reports the median,
+  p85, p90, and p95 arrival clock times plus the arrival time for the selected
+  confidence target.
+
+Changing the leave-at time also updates the trip departure used to evaluate
+scheduled road impacts. Recompare the route after changing it when a closure
+has an active-time window.
 
 Until real observations are imported, the only choice is **Modeled estimate ·
 no history**. This is explicitly labeled `modeled_uncalibrated` and uses a
@@ -271,8 +282,8 @@ is authoritative for shared scenarios:
 - Unsaved planning state is stored only in browser IndexedDB. After a reload,
   the app asks whether to recover or discard it and never silently discards it.
 - The saved map viewport, trip endpoints, restrictions, schedules, selected
-  route, arrival deadline, buffer, confidence target, and profile choice are
-  restored with the scenario.
+  route, timing mode, arrival deadline or departure start, buffer, confidence
+  target, and profile choice are restored with the scenario.
 - Synthetic demand, demand-pair count, assignment iterations, and endpoint
   dispersion settings are also restored. Calculated diversion results are
   recomputed or retrieved from the shared SQLite cache.

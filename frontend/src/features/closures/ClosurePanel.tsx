@@ -35,6 +35,7 @@ type ClosurePanelProps = {
   scenarioDirty: boolean
   canSave: boolean
   saving: boolean
+  saveError: string | null
   onScenarioNameChange: (value: string) => void
   onSaveScenario: () => void
 }
@@ -62,6 +63,7 @@ export function ClosurePanel({
   scenarioDirty,
   canSave,
   saving,
+  saveError,
   onScenarioNameChange,
   onSaveScenario,
 }: ClosurePanelProps) {
@@ -189,6 +191,7 @@ export function ClosurePanel({
               Revision {currentScenarioRevision} · {scenarioDirty ? 'Unsaved changes' : 'Saved'}
             </small>
           ) : null}
+          {saveError ? <small className="schedule-error" role="alert">{saveError}</small> : null}
         </div>
       ) : null}
 

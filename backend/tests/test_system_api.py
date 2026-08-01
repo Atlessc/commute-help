@@ -127,6 +127,14 @@ def _scenario_content() -> dict:
             }
         ],
         "selected_route_id": None,
+        "reliability_conditions": {
+            "planning_mode": "depart_at",
+            "arrival_deadline": None,
+            "buffer_minutes": 8,
+            "confidence_target": 0.9,
+            "sample_count": 1000,
+            "profile_id": None,
+        },
         "diversion_conditions": {
             "demand_vph": 1200,
             "demand_pair_count": 20,
@@ -177,6 +185,8 @@ def test_scenario_crud_revisions_conflicts_and_round_trip(tmp_path: Path) -> Non
     assert created_response.status_code == 201
     assert created["revision"] == 1
     assert created["content"] == loaded["content"]
+    assert created["content"]["reliability_conditions"]["planning_mode"] == "depart_at"
+    assert created["content"]["reliability_conditions"]["arrival_deadline"] is None
     assert created["content"]["diversion_conditions"] == {
         "demand_vph": 1200,
         "demand_pair_count": 20,

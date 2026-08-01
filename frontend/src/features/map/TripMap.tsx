@@ -414,7 +414,7 @@ export default function TripMap({
           {closurePicking
             ? closureSelectionPending
               ? 'Finding road directions…'
-              : 'Click the road segment you want to close'
+              : 'Click each road section to add it, then choose Done selecting roads'
             : selectionPending
               ? 'Finding the nearest routable road…'
               : `Click the map to set ${selectionMode === 'origin' ? 'Point A' : 'Point B'}`}

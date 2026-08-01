@@ -170,6 +170,19 @@ def test_historical_and_modeled_simulations_are_reproducible(tmp_path: Path) -> 
             "/api/simulations",
             json={**request, "profile_id": None},
         )
+        departure_mode = client.post(
+            "/api/simulations",
+            json={
+                **request,
+                "planning_mode": "depart_at",
+                "arrival_deadline": None,
+                "profile_id": None,
+            },
+        )
+        missing_arrival_deadline = client.post(
+            "/api/simulations",
+            json={**request, "arrival_deadline": None},
+        )
 
     assert historical_first.status_code == 200, historical_first.text
     assert historical_first.json() == historical_second.json()
@@ -183,6 +196,14 @@ def test_historical_and_modeled_simulations_are_reproducible(tmp_path: Path) -> 
     assert modeled.status_code == 200
     assert modeled.json()["evidence_level"] == "modeled_uncalibrated"
     assert modeled.json()["source_window"] == "No historical observations"
+    assert departure_mode.status_code == 200
+    departure_result = departure_mode.json()
+    assert departure_result["planning_mode"] == "depart_at"
+    assert departure_result["on_time_probability"] is None
+    assert departure_result["latest_safe_departure"] is None
+    assert departure_result["early_departure_benefits"] == []
+    assert departure_result["confidence_arrival_time"] == departure_result["p90_arrival_time"]
+    assert missing_arrival_deadline.status_code == 422
 
 
 def test_coordinate_matching_preserves_opposing_directions(tmp_path: Path) -> None:

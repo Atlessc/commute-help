@@ -101,20 +101,20 @@ const directionSchema = z.object({
 const restrictionSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('full'),
-    starts_at: z.string().optional(),
-    ends_at: z.string().optional(),
+    starts_at: z.string().nullish().transform((value) => value ?? undefined),
+    ends_at: z.string().nullish().transform((value) => value ?? undefined),
   }),
   z.object({
     type: z.literal('lane'),
     remaining_lanes: z.number().positive(),
-    starts_at: z.string().optional(),
-    ends_at: z.string().optional(),
+    starts_at: z.string().nullish().transform((value) => value ?? undefined),
+    ends_at: z.string().nullish().transform((value) => value ?? undefined),
   }),
   z.object({
     type: z.literal('speed'),
     speed_limit_kph: z.number().min(5).max(130),
-    starts_at: z.string().optional(),
-    ends_at: z.string().optional(),
+    starts_at: z.string().nullish().transform((value) => value ?? undefined),
+    ends_at: z.string().nullish().transform((value) => value ?? undefined),
   }),
 ])
 const contentSchema = z.object({

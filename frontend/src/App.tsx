@@ -376,13 +376,12 @@ function App() {
     const arrivalDeadline = reliabilitySettings.arrivalDeadline
       ? new Date(reliabilitySettings.arrivalDeadline)
       : null
-    if (
-      Number.isNaN(departure.getTime()) ||
-      (reliabilitySettings.planningMode === 'arrive_by' &&
-        (!arrivalDeadline ||
-          Number.isNaN(arrivalDeadline.getTime()) ||
-          arrivalDeadline <= departure))
-    ) return undefined
+    if (Number.isNaN(departure.getTime())) return undefined
+    const validArrivalDeadline =
+      reliabilitySettings.planningMode === 'arrive_by' &&
+      arrivalDeadline !== null &&
+      !Number.isNaN(arrivalDeadline.getTime()) &&
+      arrivalDeadline > departure
     const graphVersion =
       closureSections[0]?.selection.graph_version ?? system.data?.graph.version
     if (!graphVersion) return undefined
@@ -411,17 +410,19 @@ function App() {
         .filter((section) => section.selected_edge_ids.length > 0),
       selected_route_id: selectedAlternativeRouteId,
       map_state: mapState,
-      reliability_conditions: {
-        planning_mode: reliabilitySettings.planningMode,
-        arrival_deadline:
-          reliabilitySettings.planningMode === 'arrive_by' && arrivalDeadline
-            ? arrivalDeadline.toISOString()
-            : null,
-        buffer_minutes: reliabilitySettings.bufferMinutes,
-        confidence_target: reliabilitySettings.confidenceTarget,
-        sample_count: reliabilitySettings.sampleCount,
-        profile_id: reliabilitySettings.profileId,
-      },
+      reliability_conditions:
+        reliabilitySettings.planningMode === 'depart_at' || validArrivalDeadline
+          ? {
+              planning_mode: reliabilitySettings.planningMode,
+              arrival_deadline: validArrivalDeadline && arrivalDeadline
+                ? arrivalDeadline.toISOString()
+                : null,
+              buffer_minutes: reliabilitySettings.bufferMinutes,
+              confidence_target: reliabilitySettings.confidenceTarget,
+              sample_count: reliabilitySettings.sampleCount,
+              profile_id: reliabilitySettings.profileId,
+            }
+          : null,
       diversion_conditions: {
         demand_vph: diversionSettings.demandVph,
         demand_pair_count: diversionSettings.demandPairCount,
@@ -488,6 +489,7 @@ function App() {
   function saveCurrentScenario() {
     const content = buildScenarioContent()
     if (!content || !scenarioName.trim()) return
+    setClosurePicking(false)
     scenarioActionMutation.mutate({
       type: 'save',
       name: scenarioName,
@@ -827,6 +829,7 @@ function App() {
               scenarioDirty={scenarioDirty}
               canSave={currentScenarioContent !== undefined}
               saving={scenarioActionMutation.isPending}
+              saveError={formatScenarioError(scenarioActionMutation.error)}
               onScenarioNameChange={setScenarioName}
               onSaveScenario={saveCurrentScenario}
             />
@@ -1003,7 +1006,7 @@ function restrictionForWorkflow(
 function formatScenarioError(error: Error | null): string | null {
   if (!error) return null
   if (error.name === 'ZodError') {
-    return 'That file is not a valid Commute Help scenario export.'
+    return 'The scenario data did not match the expected Commute Help format.'
   }
   return error.message
 }
