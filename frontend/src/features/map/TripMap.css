@@ -1,0 +1,48 @@
+.map-shell {
+  position: relative;
+  min-height: 560px;
+  overflow: hidden;
+  background: #dce3da;
+}
+
+.trip-map {
+  position: absolute;
+  inset: 0;
+}
+
+.map-instruction,
+.map-error {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  max-width: calc(100% - 32px);
+  padding: 10px 15px;
+  border-radius: 999px;
+  color: white;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-align: center;
+  transform: translateX(-50%);
+  box-shadow: 0 8px 24px rgba(32, 42, 36, 0.2);
+}
+
+.map-instruction {
+  top: 18px;
+  background: rgba(35, 86, 63, 0.94);
+}
+
+.map-error {
+  bottom: 34px;
+  background: rgba(164, 71, 43, 0.95);
+}
+
+.maplibregl-ctrl-group {
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(32, 42, 36, 0.14);
+}
+
+@media (max-width: 800px) {
+  .map-shell {
+    min-height: 430px;
+  }
+}

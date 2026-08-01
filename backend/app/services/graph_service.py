@@ -22,7 +22,12 @@ class GraphService:
         self.graph_path = graph_path
         self.manifest_path = manifest_path
         self.graph: nx.MultiDiGraph | None = None
+        self.nodes: gpd.GeoDataFrame | None = None
         self.edges: gpd.GeoDataFrame | None = None
+        self.projected_nodes: gpd.GeoDataFrame | None = None
+        self.projected_edges: gpd.GeoDataFrame | None = None
+        self.node_lookup: dict[str, int] = {}
+        self.edge_id_positions: dict[str, int] = {}
         self.manifest: GraphManifest | None = None
         self._status = GraphRuntimeStatus(status="not_configured")
 
@@ -53,15 +58,45 @@ class GraphService:
             if self._sha256(self.graph_path) != graph_artifact.sha256:
                 raise ValueError("GraphML checksum does not match its manifest")
 
-            graph = ox.io.load_graphml(self.graph_path)
+            graph = ox.io.load_graphml(
+                self.graph_path,
+                edge_dtypes={
+                    "free_flow_seconds": float,
+                    "length_m": float,
+                    "maxspeed_kph": float,
+                    "estimated_capacity_vph": float,
+                    "lanes": float,
+                    "service_penalty": float,
+                    "residential_penalty": float,
+                    "surface_penalty": float,
+                },
+            )
             if graph.graph.get("graph_version") != manifest.graph_version:
                 raise ValueError("graph version does not match its manifest")
 
-            edges = ox.convert.graph_to_gdfs(graph, nodes=False, fill_edge_geometry=True)
-            _ = edges.sindex
+            for _, _, _, data in graph.edges(keys=True, data=True):
+                data["routing_cost_seconds"] = float(data["free_flow_seconds"]) * (
+                    float(data.get("service_penalty", 1))
+                    * float(data.get("residential_penalty", 1))
+                    * float(data.get("surface_penalty", 1))
+                )
+
+            nodes, edges = ox.convert.graph_to_gdfs(graph, fill_edge_geometry=True)
+            projected_nodes = nodes[["geometry"]].to_crs("EPSG:32610")
+            projected_edges = edges[["geometry"]].to_crs("EPSG:32610")
+            _ = projected_nodes.sindex
+            _ = projected_edges.sindex
 
             self.graph = graph
+            self.nodes = nodes
             self.edges = edges
+            self.projected_nodes = projected_nodes
+            self.projected_edges = projected_edges
+            self.node_lookup = {str(node): node for node in graph.nodes}
+            self.edge_id_positions = {
+                str(edge_id): position
+                for position, edge_id in enumerate(edges["edge_id"])
+            }
             self.manifest = manifest
             self._status = GraphRuntimeStatus(
                 status="ready",
@@ -87,7 +122,12 @@ class GraphService:
 
     def _set_error(self, message: str) -> None:
         self.graph = None
+        self.nodes = None
         self.edges = None
+        self.projected_nodes = None
+        self.projected_edges = None
+        self.node_lookup = {}
+        self.edge_id_positions = {}
         self.manifest = None
         self._status = GraphRuntimeStatus(status="error", message=message)
 

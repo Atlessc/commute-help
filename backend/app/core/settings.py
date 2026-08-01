@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     database_path: Path = Path("data/app.db")
     graph_path: Path = Path("data/graphs/portland-vancouver.graphml")
     graph_manifest_path: Path = Path("data/graphs/graph-manifest.json")
+    traffic_path: Path = Path("data/traffic")
 
 
 @lru_cache
