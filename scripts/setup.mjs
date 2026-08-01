@@ -29,11 +29,14 @@ if (nodeMajor < 20) {
 }
 
 if (!existsSync('.venv/bin/python')) {
-  const systemPython = output('python3.12', ['--version'])
-    ? 'python3.12'
-    : output('python3', ['--version'])
-      ? 'python3'
-      : null
+  const candidates = ['python3.12', 'python3']
+  const systemPython = candidates.find(
+    (candidate) =>
+      output(candidate, [
+        '-c',
+        'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")',
+      ]) === '3.12',
+  ) ?? null
 
   if (!systemPython) {
     console.error('Python 3.12 is required but was not found.')
@@ -56,4 +59,5 @@ run('npm', ['--prefix', 'frontend', 'install'])
 run('.venv/bin/python', ['-m', 'pip', 'install', '-r', 'backend/requirements.txt'])
 
 console.log('\nSetup complete. Start Commute Help with `npm run dev`.')
-console.log('Road-network generation will be added in Phase 1.')
+console.log('Run `npm run doctor` to verify local data and dependencies.')
+console.log('If the road graph is missing, run `npm run graph:build` once.')

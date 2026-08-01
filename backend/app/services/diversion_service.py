@@ -27,6 +27,7 @@ from backend.app.schemas.diversion import (
     DiversionResult,
 )
 from backend.app.schemas.routing import GeoJSONLineString, RouteCompareRequest
+from backend.app.schemas.routing import RouteSummary
 from backend.app.services.graph_service import GraphService, GraphUnavailableError
 from backend.app.services.routing_service import (
     AppliedRestriction,
@@ -36,10 +37,16 @@ from backend.app.services.routing_service import (
     SameLocationError,
 )
 from backend.app.services.spatial_service import SpatialService
+from backend.app.services.traffic_service import (
+    BackgroundTrafficSnapshot,
+    TrafficProfileMismatchError,
+    TrafficProfileNotFoundError,
+    TrafficService,
+)
 
 logger = logging.getLogger(__name__)
 PACIFIC = ZoneInfo("America/Los_Angeles")
-MODEL_VERSION = "incremental-msa-bpr-v1"
+MODEL_VERSION = "background-flow-msa-bpr-v2"
 BPR_ALPHA = 0.15
 BPR_BETA = 4.0
 
@@ -69,6 +76,13 @@ class _Assignment:
     unassigned_vph: float
 
 
+@dataclass(frozen=True)
+class _Demand:
+    origin: Any
+    destination: Any
+    volume_vph: float
+
+
 class _Cancelled(RuntimeError):
     pass
 
@@ -82,11 +96,13 @@ class DiversionService:
         graph_service: GraphService,
         spatial_service: SpatialService,
         routing_service: RoutingService,
+        traffic_service: TrafficService,
     ) -> None:
         self.database = database
         self.graph_service = graph_service
         self.spatial_service = spatial_service
         self.routing_service = routing_service
+        self.traffic_service = traffic_service
         self._jobs: dict[UUID, _Job] = {}
         self._lock = Lock()
         self._executor = ThreadPoolExecutor(
@@ -182,6 +198,8 @@ class DiversionService:
             InvalidClosureError,
             SameLocationError,
             ValueError,
+            TrafficProfileMismatchError,
+            TrafficProfileNotFoundError,
         ) as error:
             self._update(
                 job_id,
@@ -250,13 +268,20 @@ class DiversionService:
             payload.dispersion_radius_m,
             cache_key,
         )
+        user_demands = [
+            _Demand(origin=start, destination=end, volume_vph=payload.demand_vph / len(pairs))
+            for start, end in pairs
+        ]
+        background = self._background_snapshot(payload)
         check_cancelled = self._cancel_checker(job_id)
         baseline = self._assign(
             graph=graph,
-            pairs=pairs,
-            demand_vph=payload.demand_vph,
+            demands=user_demands,
             iterations=payload.iterations,
             restrictions={},
+            base_flows=background.flow_by_edge,
+            reference_flows=background.flow_by_edge,
+            observed_speeds=background.speed_kph_by_edge,
             progress=lambda completed, total: self._assignment_progress(
                 job_id, "baseline", completed, total
             ),
@@ -268,12 +293,27 @@ class DiversionService:
                 graph.edges[u, v, key], restrictions
             ),
         )
+        scenario_background = dict(background.flow_by_edge)
+        displaced_demands: list[_Demand] = []
+        for edge_id, restriction in restrictions.items():
+            if restriction.type != "full":
+                continue
+            displaced_vph = scenario_background.pop(edge_id, 0.0)
+            position = self.graph_service.edge_id_positions.get(edge_id)
+            if displaced_vph <= 0 or position is None or self.graph_service.edges is None:
+                continue
+            u, v, _key = self.graph_service.edges.index[position]
+            displaced_demands.append(
+                _Demand(origin=u, destination=v, volume_vph=displaced_vph)
+            )
         scenario = self._assign(
             graph=scenario_graph,
-            pairs=pairs,
-            demand_vph=payload.demand_vph,
+            demands=[*user_demands, *displaced_demands],
             iterations=payload.iterations,
             restrictions=restrictions,
+            base_flows=scenario_background,
+            reference_flows=background.flow_by_edge,
+            observed_speeds=background.speed_kph_by_edge,
             progress=lambda completed, total: self._assignment_progress(
                 job_id, "scenario", completed, total
             ),
@@ -281,6 +321,16 @@ class DiversionService:
         )
         check_cancelled()
         self._update(job_id, progress=97, message="Preparing the spillover layer.")
+        recommended_route = self._recommended_route(
+            scenario_graph,
+            origin,
+            destination,
+            scenario.flows,
+            background.flow_by_edge,
+            background.speed_kph_by_edge,
+            restrictions,
+            manifest.graph_version,
+        )
         (
             edge_changes,
             changed_count,
@@ -301,21 +351,54 @@ class DiversionService:
             demand_pair_count=len(pairs),
             iterations=payload.iterations,
             dispersion_radius_m=payload.dispersion_radius_m,
+            traffic_profile_id=payload.traffic_profile_id,
+            background_source=background.source_name,
+            background_bucket=background.bucket_label,
+            background_observation_count=background.observation_count,
+            background_matched_edge_count=background.matched_edge_count,
+            background_network_coverage_percent=background.coverage_percent,
+            displaced_background_vph=sum(demand.volume_vph for demand in displaced_demands),
             assigned_demand_vph=scenario.assigned_vph,
             unassigned_demand_vph=scenario.unassigned_vph,
             changed_edge_count=changed_count,
             max_increase_vph=max_increase,
             max_decrease_vph=max_decrease,
             residential_increase_vph=max(0.0, residential_increase),
+            recommended_route=recommended_route,
             edge_changes=edge_changes,
             assumptions=[
-                "This is a synthetic relative-diversion model, not observed or live traffic.",
+                (
+                    "Matched historical volume and speed seed the modeled network; uncovered roads remain class-based estimates."
+                    if payload.traffic_profile_id
+                    else "No historical background-flow profile was selected; traffic demand is synthetic."
+                ),
                 "Demand pairs are deterministically dispersed around the selected trip endpoints.",
                 "Routes use directed OpenStreetMap access, class penalties, and estimated hourly capacities.",
                 "Congestion costs use the uncalibrated BPR formula with alpha 0.15 and beta 4.0.",
                 "Incremental all-or-nothing assignments are averaged with the method of successive averages.",
-                "Only the selected synthetic demand is modeled; background regional traffic and signal timing are omitted.",
+                "Observed flow on a fully closed directed edge is reassigned between that edge's endpoints as a bounded first-order detour.",
+                "Regional origin-destination demand, signal timing, and queue spillback are not yet modeled.",
             ],
+        )
+
+    def _background_snapshot(self, payload: DiversionRequest) -> BackgroundTrafficSnapshot:
+        manifest = self.graph_service.require_manifest()
+        if payload.traffic_profile_id is not None:
+            return self.traffic_service.background_snapshot(
+                payload.traffic_profile_id,
+                payload.departure_time,
+            )
+        return BackgroundTrafficSnapshot(
+            profile_id=UUID(int=0),
+            profile_version="synthetic-background-v1",
+            source_name="Synthetic demand only",
+            source_window="No historical background observations",
+            bucket_label="Selected departure time",
+            flow_by_edge={},
+            speed_kph_by_edge={},
+            observation_count=0,
+            matched_edge_count=0,
+            network_edge_count=manifest.metrics.directed_edges,
         )
 
     def _demand_pairs(
@@ -358,55 +441,70 @@ class DiversionService:
         self,
         *,
         graph: nx.MultiDiGraph,
-        pairs: list[tuple[Any, Any]],
-        demand_vph: int,
+        demands: list[_Demand],
         iterations: int,
         restrictions: dict[str, AppliedRestriction],
+        base_flows: dict[str, float],
+        reference_flows: dict[str, float],
+        observed_speeds: dict[str, float],
         progress: Callable[[int, int], None],
         check_cancelled: Callable[[], None],
     ) -> _Assignment:
-        flows: dict[str, float] = {}
-        per_pair_vph = demand_vph / len(pairs)
-        total_steps = iterations * len(pairs)
+        assigned_flows: dict[str, float] = {}
+        total_steps = iterations * len(demands)
         completed_steps = 0
-        final_unassigned_pairs = 0
+        final_unassigned_vph = 0.0
         for iteration in range(1, iterations + 1):
             auxiliary: dict[str, float] = defaultdict(float)
-            unassigned_pairs = 0
-            weight = self._congested_weight(flows, restrictions)
-            for origin, destination in pairs:
+            unassigned_vph = 0.0
+            total_flows = _merge_flows(base_flows, assigned_flows)
+            weight = self._congested_weight(
+                total_flows,
+                restrictions,
+                reference_flows,
+                observed_speeds,
+            )
+            for demand in demands:
                 check_cancelled()
                 try:
                     path = self.routing_service.find_path(
-                        graph, origin, destination, weight=weight
+                        graph, demand.origin, demand.destination, weight=weight
                     )
                 except NoRouteError:
-                    unassigned_pairs += 1
+                    unassigned_vph += demand.volume_vph
                 else:
                     for u, v in zip(path, path[1:]):
                         edge = self._best_assignment_edge(
-                            graph, u, v, flows, restrictions
+                            graph,
+                            u,
+                            v,
+                            total_flows,
+                            restrictions,
+                            reference_flows,
+                            observed_speeds,
                         )
-                        auxiliary[str(edge["edge_id"])] += per_pair_vph
+                        auxiliary[str(edge["edge_id"])] += demand.volume_vph
                 completed_steps += 1
                 progress(completed_steps, total_steps)
             step_size = 1 / iteration
-            for edge_id in set(flows) | set(auxiliary):
-                flows[edge_id] = flows.get(edge_id, 0.0) + step_size * (
-                    auxiliary.get(edge_id, 0.0) - flows.get(edge_id, 0.0)
+            for edge_id in set(assigned_flows) | set(auxiliary):
+                assigned_flows[edge_id] = assigned_flows.get(edge_id, 0.0) + step_size * (
+                    auxiliary.get(edge_id, 0.0) - assigned_flows.get(edge_id, 0.0)
                 )
-            final_unassigned_pairs = unassigned_pairs
-        unassigned_vph = final_unassigned_pairs * per_pair_vph
+            final_unassigned_vph = unassigned_vph
+        demand_vph = sum(demand.volume_vph for demand in demands)
         return _Assignment(
-            flows=flows,
-            assigned_vph=max(0.0, demand_vph - unassigned_vph),
-            unassigned_vph=unassigned_vph,
+            flows=_merge_flows(base_flows, assigned_flows),
+            assigned_vph=max(0.0, demand_vph - final_unassigned_vph),
+            unassigned_vph=final_unassigned_vph,
         )
 
     @staticmethod
     def _congested_weight(
         flows: dict[str, float],
         restrictions: dict[str, AppliedRestriction],
+        reference_flows: dict[str, float],
+        observed_speeds: dict[str, float],
     ) -> Callable[[Any, Any, dict[Any, dict[str, Any]]], float]:
         def weight(
             _u: Any,
@@ -418,6 +516,8 @@ class DiversionService:
                     edge,
                     flows.get(str(edge["edge_id"]), 0.0),
                     restrictions.get(str(edge["edge_id"])),
+                    reference_flows.get(str(edge["edge_id"]), 0.0),
+                    observed_speeds.get(str(edge["edge_id"])),
                 )
                 for edge in candidates.values()
             )
@@ -431,6 +531,8 @@ class DiversionService:
         v: Any,
         flows: dict[str, float],
         restrictions: dict[str, AppliedRestriction],
+        reference_flows: dict[str, float],
+        observed_speeds: dict[str, float],
     ) -> dict[str, Any]:
         candidates = graph.get_edge_data(u, v)
         if not candidates:
@@ -441,7 +543,80 @@ class DiversionService:
                 edge,
                 flows.get(str(edge["edge_id"]), 0.0),
                 restrictions.get(str(edge["edge_id"])),
+                reference_flows.get(str(edge["edge_id"]), 0.0),
+                observed_speeds.get(str(edge["edge_id"])),
             ),
+        )
+
+    def _recommended_route(
+        self,
+        graph: nx.MultiDiGraph,
+        origin: Any,
+        destination: Any,
+        flows: dict[str, float],
+        reference_flows: dict[str, float],
+        observed_speeds: dict[str, float],
+        restrictions: dict[str, AppliedRestriction],
+        graph_version: str,
+    ) -> RouteSummary | None:
+        weight = self._congested_weight(
+            flows,
+            restrictions,
+            reference_flows,
+            observed_speeds,
+        )
+        try:
+            path = self.routing_service.find_path(
+                graph,
+                origin,
+                destination,
+                weight=weight,
+            )
+        except NoRouteError:
+            return None
+
+        coordinates: list[tuple[float, float]] = []
+        distance_m = 0.0
+        travel_time_seconds = 0.0
+        edge_identity: list[str] = []
+        for u, v in zip(path, path[1:]):
+            edge = self._best_assignment_edge(
+                graph,
+                u,
+                v,
+                flows,
+                restrictions,
+                reference_flows,
+                observed_speeds,
+            )
+            edge_id = str(edge["edge_id"])
+            edge_coordinates = self.routing_service._oriented_coordinates(
+                graph, u, v, edge
+            )
+            if coordinates and edge_coordinates and coordinates[-1] == edge_coordinates[0]:
+                coordinates.extend(edge_coordinates[1:])
+            else:
+                coordinates.extend(edge_coordinates)
+            distance_m += float(edge["length_m"])
+            travel_time_seconds += _congested_travel_time(
+                edge,
+                flows.get(edge_id, 0.0),
+                restrictions.get(edge_id),
+                reference_flows.get(edge_id, 0.0),
+                observed_speeds.get(edge_id),
+            )
+            edge_identity.append(edge_id)
+        route_id = hashlib.sha256(
+            json.dumps(
+                [MODEL_VERSION, graph_version, str(origin), str(destination), edge_identity],
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()[:20]
+        return RouteSummary(
+            route_id=route_id,
+            travel_time_seconds=round(travel_time_seconds, 1),
+            distance_m=round(distance_m, 1),
+            geometry=GeoJSONLineString(coordinates=coordinates),
         )
 
     def _edge_changes(
@@ -647,8 +822,72 @@ def _congested_cost(
     edge: dict[str, Any],
     flow_vph: float,
     restriction: AppliedRestriction | None,
+    reference_flow_vph: float = 0.0,
+    observed_speed_kph: float | None = None,
 ) -> float:
-    base_cost, _travel_time = RoutingService._effective_costs(edge, restriction)
+    base_cost, effective_travel_time = RoutingService._effective_costs(edge, restriction)
+    calibrated_travel_time = _calibrated_travel_time(
+        edge,
+        effective_travel_time,
+        observed_speed_kph,
+    )
+    base_cost *= calibrated_travel_time / max(effective_travel_time, 0.1)
     capacity = _effective_capacity(edge, restriction)
-    volume_capacity = max(flow_vph, 0.0) / capacity
-    return base_cost * (1 + BPR_ALPHA * math.pow(volume_capacity, BPR_BETA))
+    return base_cost * _relative_bpr_factor(
+        flow_vph,
+        reference_flow_vph,
+        capacity,
+    )
+
+
+def _congested_travel_time(
+    edge: dict[str, Any],
+    flow_vph: float,
+    restriction: AppliedRestriction | None,
+    reference_flow_vph: float = 0.0,
+    observed_speed_kph: float | None = None,
+) -> float:
+    _cost, effective_travel_time = RoutingService._effective_costs(edge, restriction)
+    calibrated_travel_time = _calibrated_travel_time(
+        edge,
+        effective_travel_time,
+        observed_speed_kph,
+    )
+    return calibrated_travel_time * _relative_bpr_factor(
+        flow_vph,
+        reference_flow_vph,
+        _effective_capacity(edge, restriction),
+    )
+
+
+def _calibrated_travel_time(
+    edge: dict[str, Any],
+    effective_travel_time: float,
+    observed_speed_kph: float | None,
+) -> float:
+    if observed_speed_kph is None or observed_speed_kph <= 0:
+        return effective_travel_time
+    observed_seconds = float(edge["length_m"]) / (observed_speed_kph / 3.6)
+    return max(effective_travel_time, observed_seconds)
+
+
+def _relative_bpr_factor(
+    flow_vph: float,
+    reference_flow_vph: float,
+    capacity_vph: float,
+) -> float:
+    current_ratio = max(flow_vph, 0.0) / max(capacity_vph, 1.0)
+    reference_ratio = max(reference_flow_vph, 0.0) / max(capacity_vph, 1.0)
+    current = 1 + BPR_ALPHA * math.pow(current_ratio, BPR_BETA)
+    reference = 1 + BPR_ALPHA * math.pow(reference_ratio, BPR_BETA)
+    return current / reference
+
+
+def _merge_flows(
+    first: dict[str, float],
+    second: dict[str, float],
+) -> dict[str, float]:
+    return {
+        edge_id: first.get(edge_id, 0.0) + second.get(edge_id, 0.0)
+        for edge_id in set(first) | set(second)
+    }

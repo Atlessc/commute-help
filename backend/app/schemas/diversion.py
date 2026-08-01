@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, model_validator
 
 from backend.app.schemas.routing import ClosureInput, GeoJSONLineString, RouteLocation
+from backend.app.schemas.routing import RouteSummary
 
 
 class DiversionRequest(BaseModel):
@@ -22,6 +23,7 @@ class DiversionRequest(BaseModel):
     iterations: int = Field(default=4, ge=2, le=10)
     dispersion_radius_m: int = Field(default=1500, ge=0, le=10000)
     max_result_edges: int = Field(default=200, ge=25, le=500)
+    traffic_profile_id: UUID | None = None
 
     @model_validator(mode="after")
     def validate_departure(self) -> "DiversionRequest":
@@ -57,12 +59,20 @@ class DiversionResult(BaseModel):
     demand_pair_count: int
     iterations: int
     dispersion_radius_m: int
+    traffic_profile_id: UUID | None = None
+    background_source: str
+    background_bucket: str
+    background_observation_count: int = Field(ge=0)
+    background_matched_edge_count: int = Field(ge=0)
+    background_network_coverage_percent: float = Field(ge=0, le=100)
+    displaced_background_vph: float = Field(ge=0)
     assigned_demand_vph: float = Field(ge=0)
     unassigned_demand_vph: float = Field(ge=0)
     changed_edge_count: int = Field(ge=0)
     max_increase_vph: float = Field(ge=0)
     max_decrease_vph: float = Field(le=0)
     residential_increase_vph: float = Field(ge=0)
+    recommended_route: RouteSummary | None = None
     edge_changes: list[DiversionEdgeChange]
     assumptions: list[str]
 

@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Route, ShieldCheck } from 'lucide-react'
+import { Route, ShieldAlert, ShieldCheck } from 'lucide-react'
 import {
   compareRoute,
   createGoogleMapsUrl,
@@ -428,6 +428,7 @@ function App() {
         demand_pair_count: diversionSettings.demandPairCount,
         iterations: diversionSettings.iterations,
         dispersion_radius_m: diversionSettings.dispersionRadiusM,
+        traffic_profile_id: diversionSettings.trafficProfileId,
       },
     }
   }
@@ -472,6 +473,7 @@ function App() {
             demandPairCount: content.diversion_conditions.demand_pair_count,
             iterations: content.diversion_conditions.iterations,
             dispersionRadiusM: content.diversion_conditions.dispersion_radius_m,
+            trafficProfileId: content.diversion_conditions.traffic_profile_id,
           }
         : DEFAULT_DIVERSION_SETTINGS,
     )
@@ -706,12 +708,15 @@ function App() {
   const selectedAlternative = alternatives.find(
     (candidate) => candidate.route.route_id === selectedAlternativeRouteId,
   )
-  const selectedNavigationRoute =
-    selectedAlternative?.route ?? displayedResult?.scenario ?? displayedResult?.baseline
   const currentDiversionResult =
     diversionSnapshot?.comparisonKey === currentClosureKey
       ? diversionSnapshot.result
       : null
+  const selectedNavigationRoute =
+    currentDiversionResult?.recommended_route ??
+    selectedAlternative?.route ??
+    displayedResult?.scenario ??
+    displayedResult?.baseline
   const googleHandoff = useQuery({
     queryKey: [
       'google-maps-url',
@@ -738,8 +743,23 @@ function App() {
     refetchOnWindowFocus: false,
   })
 
+  const readinessNotice = system.error
+    ? {
+        title: 'The local API is not responding.',
+        detail: 'Stop the current terminal process, run npm run doctor, then start again with npm run dev.',
+      }
+    : !system.isPending && system.data?.graph.status !== 'ready'
+      ? {
+          title: system.data?.graph.status === 'error'
+            ? 'The road graph could not be loaded.'
+            : 'The road graph has not been built yet.',
+          detail: `${system.data?.graph.message ?? 'Routing is unavailable.'} Run npm run graph:build, then restart Commute Help.`,
+        }
+      : null
+
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#planner-main">Skip to trip planner</a>
       <header className="app-header">
         <a className="brand" href="/" aria-label="Commute Help home">
           <span className="brand-mark" aria-hidden="true">
@@ -774,7 +794,9 @@ function App() {
           className={`graph-badge ${graphReady ? 'graph-badge--ready' : ''}`}
           title={system.data?.graph.message ?? undefined}
         >
-          <ShieldCheck size={15} aria-hidden="true" />
+          {graphReady
+            ? <ShieldCheck size={15} aria-hidden="true" />
+            : <ShieldAlert size={15} aria-hidden="true" />}
           {system.isPending
             ? 'Connecting'
             : graphReady
@@ -782,6 +804,16 @@ function App() {
               : 'Graph unavailable'}
         </span>
       </header>
+
+      {readinessNotice ? (
+        <div className="readiness-notice" role="status">
+          <ShieldAlert size={20} aria-hidden="true" />
+          <div>
+            <strong>{readinessNotice.title}</strong>
+            <span>{readinessNotice.detail}</span>
+          </div>
+        </div>
+      ) : null}
 
       {pendingDraft ? (
         <DraftRecovery
@@ -791,7 +823,7 @@ function App() {
         />
       ) : null}
 
-      <main className="planner-layout">
+      <main className="planner-layout" id="planner-main" tabIndex={-1}>
         <aside className="planner-sidebar">
           <TripPanel
             origin={origin}
@@ -871,7 +903,7 @@ function App() {
               origin={origin}
               destination={destination}
               route={displayedResult?.baseline ?? null}
-              scenarioRoute={selectedAlternative?.route ?? displayedResult?.scenario ?? null}
+              scenarioRoute={currentDiversionResult?.recommended_route ?? selectedAlternative?.route ?? displayedResult?.scenario ?? null}
               closureDirections={
                 closureSections.flatMap((section) =>
                   section.selection.directions.filter((direction) =>

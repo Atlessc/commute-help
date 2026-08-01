@@ -29,6 +29,8 @@ class TrafficProfile(BaseModel):
     period: Literal["weekday_morning", "weekday_afternoon"]
     graph_version: str
     observation_count: int = Field(ge=1)
+    volume_observation_count: int = Field(default=0, ge=0)
+    matched_edge_count: int = Field(default=0, ge=0)
     median_multiplier: float = Field(ge=1)
     p85_multiplier: float = Field(ge=1)
     p90_multiplier: float = Field(ge=1)

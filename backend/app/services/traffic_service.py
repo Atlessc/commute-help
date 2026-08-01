@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 import hashlib
 import json
@@ -49,6 +50,29 @@ class TrafficProfileNotFoundError(LookupError):
 
 class TrafficProfileMismatchError(ValueError):
     """A profile belongs to a different routing graph version."""
+
+
+@dataclass(frozen=True)
+class BackgroundTrafficSnapshot:
+    """Typical directed edge conditions for one local 15-minute time bucket."""
+
+    profile_id: UUID
+    profile_version: str
+    source_name: str
+    source_window: str
+    bucket_label: str
+    flow_by_edge: dict[str, float]
+    speed_kph_by_edge: dict[str, float]
+    observation_count: int
+    matched_edge_count: int
+    network_edge_count: int
+
+    @property
+    def coverage_percent(self) -> float:
+        return round(
+            self.matched_edge_count / max(self.network_edge_count, 1) * 100,
+            2,
+        )
 
 
 class TrafficService:
@@ -299,6 +323,128 @@ class TrafficService:
             profile_version=profile_version,
             early_departure_benefits=benefits,
             assumptions=assumptions,
+        )
+
+    def background_snapshot(
+        self,
+        profile_id: UUID,
+        departure_time: datetime,
+    ) -> BackgroundTrafficSnapshot:
+        """Aggregate matched historical volume and speed for the nearest 15-minute bucket."""
+
+        profile, _stats = self._profile_with_stats(profile_id)
+        manifest = self.graph_service.require_manifest()
+        if profile.graph_version != manifest.graph_version:
+            raise TrafficProfileMismatchError(
+                "The selected traffic profile belongs to an older road graph. Import it again for review."
+            )
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT normalized_path
+                FROM traffic_imports
+                WHERE id = (SELECT import_id FROM traffic_profiles WHERE id = ?)
+                """,
+                (str(profile_id),),
+            ).fetchone()
+        if row is None:
+            raise TrafficProfileNotFoundError(
+                "The selected traffic profile no longer has its source import."
+            )
+        normalized_path = Path(row["normalized_path"])
+        try:
+            frame = pd.read_parquet(normalized_path)
+        except (OSError, ValueError) as error:
+            raise TrafficProfileNotFoundError(
+                "The selected traffic profile's normalized observations are unavailable."
+            ) from error
+
+        frame["parsed_timestamp"] = pd.to_datetime(
+            frame["timestamp_local"], utc=True
+        ).dt.tz_convert(LOCAL_TIMEZONE)
+        start_hour, end_hour = PROFILE_PERIODS[profile.period]
+        frame = frame[
+            frame["parsed_timestamp"].dt.month.isin([9, 10])
+            & frame["parsed_timestamp"].dt.dayofweek.lt(5)
+            & frame["parsed_timestamp"].dt.hour.ge(start_hour)
+            & frame["parsed_timestamp"].dt.hour.lt(end_hour)
+            & ~frame["quality_flag"].fillna("").astype(str).str.lower().isin(
+                {"bad", "invalid", "rejected"}
+            )
+        ].copy()
+        if frame.empty:
+            return self._empty_background_snapshot(profile, manifest.metrics.directed_edges)
+
+        frame["bucket_minute"] = (
+            frame["parsed_timestamp"].dt.hour * 60
+            + frame["parsed_timestamp"].dt.minute.floordiv(15) * 15
+        )
+        local_departure = departure_time.astimezone(LOCAL_TIMEZONE)
+        requested_bucket = local_departure.hour * 60 + local_departure.minute // 15 * 15
+        available_buckets = frame["bucket_minute"].dropna().astype(int).unique()
+        if not len(available_buckets):
+            return self._empty_background_snapshot(profile, manifest.metrics.directed_edges)
+        selected_bucket = min(
+            available_buckets,
+            key=lambda bucket: abs(int(bucket) - requested_bucket),
+        )
+        frame = frame[frame["bucket_minute"] == selected_bucket].copy()
+        frame["volume"] = pd.to_numeric(frame["volume"], errors="coerce")
+        frame["speed_kph"] = pd.to_numeric(frame["speed_kph"], errors="coerce")
+
+        # Collapse lane detectors that map to the same directed edge and timestamp,
+        # then use the median weekday observation as the typical background state.
+        per_timestamp = frame.groupby(
+            ["timestamp_local", "edge_id"], as_index=False
+        ).agg(
+            volume=("volume", lambda values: values[values.gt(0)].sum(min_count=1)),
+            speed_kph=("speed_kph", lambda values: values[values.gt(0)].median()),
+        )
+        per_edge = per_timestamp.groupby("edge_id", as_index=False).agg(
+            volume=("volume", "median"),
+            speed_kph=("speed_kph", "median"),
+            observation_count=("timestamp_local", "count"),
+        )
+        flow_by_edge = {
+            str(row.edge_id): float(row.volume)
+            for row in per_edge.itertuples()
+            if pd.notna(row.volume) and float(row.volume) > 0
+        }
+        speed_by_edge = {
+            str(row.edge_id): float(row.speed_kph)
+            for row in per_edge.itertuples()
+            if pd.notna(row.speed_kph) and float(row.speed_kph) > 0
+        }
+        hour, minute = divmod(int(selected_bucket), 60)
+        return BackgroundTrafficSnapshot(
+            profile_id=profile.id,
+            profile_version=profile.version,
+            source_name=profile.source_name,
+            source_window=profile.source_window,
+            bucket_label=f"{hour:02d}:{minute:02d} Pacific weekday",
+            flow_by_edge=flow_by_edge,
+            speed_kph_by_edge=speed_by_edge,
+            observation_count=int(per_edge["observation_count"].sum()),
+            matched_edge_count=len(set(flow_by_edge) | set(speed_by_edge)),
+            network_edge_count=manifest.metrics.directed_edges,
+        )
+
+    @staticmethod
+    def _empty_background_snapshot(
+        profile: TrafficProfile,
+        network_edge_count: int,
+    ) -> BackgroundTrafficSnapshot:
+        return BackgroundTrafficSnapshot(
+            profile_id=profile.id,
+            profile_version=profile.version,
+            source_name=profile.source_name,
+            source_window=profile.source_window,
+            bucket_label="No matching weekday bucket",
+            flow_by_edge={},
+            speed_kph_by_edge={},
+            observation_count=0,
+            matched_edge_count=0,
+            network_edge_count=network_edge_count,
         )
 
     @staticmethod
@@ -564,6 +710,8 @@ class TrafficService:
                 "p90_multiplier": float(np.quantile(multipliers, 0.90)),
                 "p95_multiplier": float(np.quantile(multipliers, 0.95)),
                 "multiplier_samples": sample_values,
+                "volume_observation_count": int(period_frame["volume"].gt(0).sum()),
+                "matched_edge_count": int(period_frame["edge_id"].nunique()),
             }
             profile = TrafficProfile(
                 id=uuid4(),
@@ -578,6 +726,8 @@ class TrafficService:
                 period=period,
                 graph_version=graph_version,
                 observation_count=len(multipliers),
+                volume_observation_count=stats["volume_observation_count"],
+                matched_edge_count=stats["matched_edge_count"],
                 median_multiplier=stats["median_multiplier"],
                 p85_multiplier=stats["p85_multiplier"],
                 p90_multiplier=stats["p90_multiplier"],
@@ -617,6 +767,8 @@ class TrafficService:
             period=row["period"],
             graph_version=row["graph_version"],
             observation_count=row["observation_count"],
+            volume_observation_count=int(stats.get("volume_observation_count", 0)),
+            matched_edge_count=int(stats.get("matched_edge_count", 0)),
             median_multiplier=stats["median_multiplier"],
             p85_multiplier=stats["p85_multiplier"],
             p90_multiplier=stats["p90_multiplier"],

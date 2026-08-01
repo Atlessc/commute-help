@@ -2,6 +2,35 @@
   min-height: 100vh;
 }
 
+.skip-link {
+  position: fixed;
+  z-index: 100;
+  top: 8px;
+  left: 8px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  color: white;
+  font-size: 0.75rem;
+  font-weight: 750;
+  text-decoration: none;
+  background: var(--forest);
+  transform: translateY(-150%);
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid #d48a43;
+  outline-offset: 3px;
+}
+
 .app-header {
   position: relative;
   z-index: 5;
@@ -125,6 +154,46 @@
   border-color: rgba(35, 86, 63, 0.22);
   color: var(--forest);
   background: #edf3eb;
+}
+
+.readiness-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 13px clamp(20px, 3vw, 44px);
+  border-bottom: 1px solid #dfc5b8;
+  color: #74351f;
+  background: #fbede6;
+}
+
+.readiness-notice > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.readiness-notice > div {
+  display: grid;
+  gap: 2px;
+}
+
+.readiness-notice strong {
+  font-size: 0.78rem;
+}
+
+.readiness-notice span {
+  font-size: 0.7rem;
+  line-height: 1.45;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 .planner-layout {
@@ -913,9 +982,13 @@
 
 .diversion-controls {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 10px;
   margin-top: 18px;
+}
+
+.diversion-controls label:first-child {
+  grid-column: span 2;
 }
 
 .diversion-controls label {
@@ -1014,8 +1087,31 @@
 
 .diversion-summary-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+}
+
+.diversion-route-recommendation {
+  display: grid;
+  gap: 3px;
+  margin-top: 12px;
+  padding: 13px 14px;
+  border-left: 4px solid var(--forest);
+  border-radius: 9px;
+  background: #e5eee2;
+}
+
+.diversion-route-recommendation span,
+.diversion-route-recommendation small {
+  color: var(--muted);
+  font-size: 0.64rem;
+}
+
+.diversion-route-recommendation strong {
+  color: var(--forest);
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.25rem;
+  font-weight: 500;
 }
 
 .diversion-summary-grid > div {
@@ -1309,6 +1405,92 @@
   color: var(--muted);
   font-size: 0.65rem;
   line-height: 1.45;
+}
+
+.portal-acquisition,
+.manual-traffic-import {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid #cbd6c8;
+  border-radius: 11px;
+  background: #f6f8f2;
+}
+
+.manual-traffic-import {
+  border-color: #d9ddd5;
+  background: #f8f8f5;
+}
+
+.portal-acquisition > strong,
+.manual-traffic-import > strong {
+  color: var(--ink);
+  font-size: 0.72rem;
+}
+
+.portal-acquisition > p,
+.manual-traffic-import > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.65rem;
+  line-height: 1.45;
+}
+
+.portal-acquisition-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.portal-acquisition-controls label,
+.portal-highway-picker {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.65rem;
+  font-weight: 730;
+}
+
+.portal-acquisition-controls input,
+.portal-acquisition-controls select,
+.portal-highway-picker select {
+  min-width: 0;
+  width: 100%;
+  padding: 8px 9px;
+  border: 1px solid #c4ccc1;
+  border-radius: 9px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.7rem;
+  background: white;
+}
+
+.portal-highway-picker select {
+  min-height: 132px;
+}
+
+.portal-download {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: fit-content;
+  padding: 9px 13px;
+  border: 0;
+  border-radius: 9px;
+  color: white;
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 760;
+  background: var(--forest);
+  cursor: pointer;
+}
+
+.portal-download:disabled {
+  color: #8c948e;
+  background: #e2e5df;
+  cursor: not-allowed;
 }
 
 .traffic-import-controls {
@@ -1861,6 +2043,14 @@
   .traffic-import-controls,
   .diversion-controls {
     grid-template-columns: 1fr;
+  }
+
+  .portal-acquisition-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .diversion-controls label:first-child {
+    grid-column: auto;
   }
 
   .planning-mode-toggle {

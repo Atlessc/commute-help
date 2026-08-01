@@ -136,7 +136,10 @@ def test_diversion_changes_corridors_and_reuses_cache(tmp_path: Path) -> None:
     assert finished["status"] == "completed", finished
     result = finished["result"]
     assert result["evidence_level"] == "modeled_uncalibrated"
-    assert result["model_version"] == "incremental-msa-bpr-v1"
+    assert result["model_version"] == "background-flow-msa-bpr-v2"
+    assert result["background_source"] == "Synthetic demand only"
+    assert result["background_matched_edge_count"] == 0
+    assert result["recommended_route"] is not None
     assert result["assigned_demand_vph"] == 600
     assert result["unassigned_demand_vph"] == 0
     assert result["max_increase_vph"] > 0
@@ -155,6 +158,48 @@ def test_diversion_changes_corridors_and_reuses_cache(tmp_path: Path) -> None:
     assert cached.json()["status"] == "completed"
     assert cached.json()["cached"] is True
     assert cached.json()["result"] == result
+
+
+def test_observed_background_flow_is_displaced_and_routes_the_trip(tmp_path: Path) -> None:
+    application = _application(tmp_path)
+
+    with TestClient(application) as client:
+        edge_id = str(application.state.graph_service.graph.edges[1, 2, 0]["edge_id"])
+        csv = (
+            "station_or_segment_id,timestamp_local,speed_kph,volume,quality_flag\n"
+            f"{edge_id},2025-09-08T07:15:00-07:00,32,900,good\n"
+            f"{edge_id},2025-09-15T07:15:00-07:00,35,1000,good\n"
+            f"{edge_id},2025-10-06T07:15:00-07:00,30,800,good\n"
+        ).encode()
+        imported = client.post(
+            "/api/traffic/import",
+            files={"file": ("portal-normalized.csv", csv, "text/csv")},
+            data={"source_name": "PORTAL fixture"},
+        )
+        assert imported.status_code == 200, imported.text
+        profile = imported.json()["profiles"][0]
+        payload = {
+            **_payload(application),
+            "traffic_profile_id": profile["id"],
+        }
+        started = client.post("/api/diversions", json=payload)
+        finished = _wait_for_terminal(client, started.json()["id"])
+
+    assert finished["status"] == "completed", finished
+    result = finished["result"]
+    assert result["background_source"] == "PORTAL fixture"
+    assert result["background_bucket"] == "07:15 Pacific weekday"
+    assert result["background_observation_count"] == 3
+    assert result["background_matched_edge_count"] == 1
+    assert result["background_network_coverage_percent"] > 0
+    assert result["displaced_background_vph"] == 900
+    assert result["assigned_demand_vph"] == 1500
+    assert result["recommended_route"]["travel_time_seconds"] > 0
+    closed_change = next(
+        change for change in result["edge_changes"] if change["edge_id"] == edge_id
+    )
+    assert closed_change["baseline_vph"] >= 900
+    assert closed_change["scenario_vph"] == 0
 
 
 def test_queued_diversion_can_be_cancelled(tmp_path: Path) -> None:

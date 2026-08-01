@@ -192,6 +192,7 @@ def test_scenario_crud_revisions_conflicts_and_round_trip(tmp_path: Path) -> Non
         "demand_pair_count": 20,
         "iterations": 4,
         "dispersion_radius_m": 500,
+        "traffic_profile_id": None,
     }
     assert created["graph_status"] == "review_required"
     assert [item["id"] for item in listed] == [scenario_id]

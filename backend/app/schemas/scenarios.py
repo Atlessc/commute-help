@@ -83,12 +83,13 @@ class ScenarioReliabilitySettings(BaseModel):
 
 
 class ScenarioDiversionSettings(BaseModel):
-    """Restorable inputs for a synthetic network-diversion run."""
+    """Restorable inputs for a background-aware network-diversion run."""
 
     demand_vph: int = Field(default=600, ge=50, le=5000)
     demand_pair_count: int = Field(default=10, ge=5, le=100)
     iterations: int = Field(default=3, ge=2, le=10)
     dispersion_radius_m: int = Field(default=1000, ge=0, le=10000)
+    traffic_profile_id: UUID | None = None
 
 
 class ScenarioContent(BaseModel):

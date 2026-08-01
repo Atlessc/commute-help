@@ -50,6 +50,7 @@ export type ScenarioDiversionConditions = {
   demand_pair_count: number
   iterations: number
   dispersion_radius_m: number
+  traffic_profile_id: string | null
 }
 
 export type ScenarioListItem = {
@@ -161,6 +162,7 @@ const contentSchema = z.object({
       demand_pair_count: z.number().int().min(5).max(100),
       iterations: z.number().int().min(2).max(10),
       dispersion_radius_m: z.number().int().min(0).max(10000),
+      traffic_profile_id: z.string().uuid().nullable().default(null),
     })
     .nullable()
     .default(null),

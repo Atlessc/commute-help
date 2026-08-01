@@ -19,6 +19,7 @@ from backend.app.services.routing_service import RoutingService
 from backend.app.services.scenario_service import ScenarioService
 from backend.app.services.spatial_service import SpatialService
 from backend.app.services.traffic_service import TrafficService
+from backend.app.services.portal_service import PortalService
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -38,11 +39,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         graph_service,
         active_settings.traffic_path,
     )
+    portal_service = PortalService(graph_service, traffic_service)
     diversion_service = DiversionService(
         database,
         graph_service,
         spatial_service,
         routing_service,
+        traffic_service,
     )
 
     @asynccontextmanager
@@ -55,12 +58,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         application.state.routing_service = routing_service
         application.state.scenario_service = scenario_service
         application.state.traffic_service = traffic_service
+        application.state.portal_service = portal_service
         application.state.diversion_service = diversion_service
         application.state.settings = active_settings
         try:
             yield
         finally:
             diversion_service.shutdown()
+            portal_service.close()
 
     application = FastAPI(
         title="Commute Help API",

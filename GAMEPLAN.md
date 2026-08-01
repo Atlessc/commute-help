@@ -866,6 +866,45 @@ Deliverables:
 
 Gate: a teammate unfamiliar with the code can start and use the app from written instructions.
 
+### Phase 9 — Calibrated closure domino routing
+
+The diversion model is part of the authoritative route decision, not an
+optional visualization. Its target question is: given typical regional demand
+at the selected time, how does a closure propagate through the connected road
+network, and which route remains fastest or least congested after other drivers
+respond?
+
+Deliverables:
+
+- PORTAL highway, station, detector, and direction metadata adapter
+- resumable, rate-limited, partitioned PORTAL acquisition campaign with raw provenance
+- directed 5- or 15-minute observed speed, volume, and occupancy profiles
+- evidence-ranked inference for unobserved speed, lanes, and capacity
+- Metro and RTC transportation-analysis-zone origin/destination demand import
+- calibrated normal-network assignment checked against held-out detectors
+- scheduled closure reassignment of affected regional demand
+- time-dependent bottleneck, ramp, queue, and downstream spillover progression
+- congestion-aware fastest, resilient, and lower-traffic trip alternatives
+- visible causal chain from closure to displaced flow to bottleneck to route
+- network coverage, confidence, source age, and validation-error reporting
+
+Progression:
+
+1. Seed directed background flows from matched historical observations.
+2. Reassign observed flow directly displaced by selected closures.
+3. Route the selected trip using the resulting congestion-adjusted edge costs.
+4. Add agency-specific PORTAL normalization without spreadsheet conversion.
+5. Add regional origin/destination matrices and time-of-day demand.
+6. Calibrate capacities and assignment against held-out detector days.
+7. Add rolling time buckets and queue propagation.
+8. Produce distinct traffic-aware route alternatives and uncertainty bands.
+
+Gate: for a held-out historical closure or synthetic network fixture, the
+normal assignment approximately reproduces observed directional counts and
+speeds, closure flow conserves demand within disclosed tolerances, downstream
+congestion propagates over time, and the recommended trip route uses the final
+scenario edge costs rather than free-flow costs.
+
 ## 17. Weekend target
 
 Aim to finish Phases 0–5 during the first weekend:
@@ -990,4 +1029,3 @@ After these planning files are placed in the repository, complete Phase 0 only:
 6. Add `.gitignore`, `.env.example`, and README startup instructions.
 7. Verify `/api/health` through `http://localhost:5173/api/health`.
 8. Commit the stable foundation before starting road-network work.
-

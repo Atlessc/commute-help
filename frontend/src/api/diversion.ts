@@ -4,12 +4,14 @@ import {
   type ClosureComparisonInput,
   type SelectedLocation,
 } from './routing'
+import type { RouteSummary } from './routing'
 
 export type DiversionSettings = {
   demandVph: number
   demandPairCount: number
   iterations: number
   dispersionRadiusM: number
+  trafficProfileId: string | null
 }
 
 export const DEFAULT_DIVERSION_SETTINGS: DiversionSettings = {
@@ -17,6 +19,7 @@ export const DEFAULT_DIVERSION_SETTINGS: DiversionSettings = {
   demandPairCount: 10,
   iterations: 3,
   dispersionRadiusM: 1000,
+  trafficProfileId: null,
 }
 
 export type DiversionEdgeChange = {
@@ -46,12 +49,20 @@ export type DiversionResult = {
   demand_pair_count: number
   iterations: number
   dispersion_radius_m: number
+  traffic_profile_id: string | null
+  background_source: string
+  background_bucket: string
+  background_observation_count: number
+  background_matched_edge_count: number
+  background_network_coverage_percent: number
+  displaced_background_vph: number
   assigned_demand_vph: number
   unassigned_demand_vph: number
   changed_edge_count: number
   max_increase_vph: number
   max_decrease_vph: number
   residential_increase_vph: number
+  recommended_route: RouteSummary | null
   edge_changes: DiversionEdgeChange[]
   assumptions: string[]
 }
@@ -84,6 +95,7 @@ export async function startDiversion(
       demand_pair_count: settings.demandPairCount,
       iterations: settings.iterations,
       dispersion_radius_m: settings.dispersionRadiusM,
+      traffic_profile_id: settings.trafficProfileId,
       max_result_edges: 200,
     }),
   })

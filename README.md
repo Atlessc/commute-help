@@ -31,7 +31,14 @@ npm run setup
 
 This creates or validates `.venv`, installs the root and frontend Node
 dependencies, and installs `backend/requirements.txt`. It does not download a
-road network; graph generation belongs to Phase 1.
+road network. If this Mac does not have the generated graph yet, run
+`npm run graph:build` once after setup.
+
+Verify the installation and local data without changing anything:
+
+```bash
+npm run doctor
+```
 
 ## Daily startup
 
@@ -44,6 +51,10 @@ npm run dev
 The launcher starts FastAPI and Vite together and prints the available local
 and LAN URLs. Open [http://localhost:5173](http://localhost:5173). Press Control-C once to stop both
 processes.
+
+On macOS, you can instead double-click **Commute Help.command** in Finder. It
+runs first-time setup when required and then starts the same root `npm run dev`
+workflow. Control-C still stops both services.
 
 LAN access is intended only on a trusted network. If macOS asks whether Node or
 Python may accept incoming connections, allow it only when LAN access is
@@ -202,8 +213,48 @@ changes the label to `historically_calibrated`; every result identifies the
 source, observation window, sample count, and profile version. Repeating the
 same route and settings reproduces the same samples.
 
-Open **Import historical observations** to upload a local CSV or Parquet file
-of at most 50 MB. Required columns are:
+Open **Get historical traffic data** after calculating a route. The recommended
+path is **Download directly from PORTAL**:
+
+1. Choose a completed date range of at most 62 days. September 1 through
+   October 31 of the latest completed fall is prefilled for the current profile
+   model.
+2. Choose 15-minute resolution and up to eight directional highways.
+3. Select **Get traffic from PORTAL**.
+
+No API key or manual download is required. The backend calls PORTAL's public
+highway, detector, station, and highway-metadata endpoints. It restricts the
+highway list to stations within the loaded road-graph region, requests weekdays
+by default, combines lane detectors into one directional station observation,
+converts mph to km/h, converts interval vehicle counts to vehicles/hour, and
+passes the result through the normal graph-matching and profile pipeline.
+
+The exact PORTAL request and original JSON responses are preserved under the
+ignored `data/traffic/raw/<import-id>/` directory alongside the generated CSV;
+normalized matched observations remain separate. Requests are rejected when
+they exceed 62 days, eight highways, a future date, or a 60 MB response.
+
+For a larger historical corpus, use the resumable streaming campaign instead
+of asking the application server to hold a multi-month response:
+
+```bash
+cp scripts/portal-campaign.example.json data/traffic/portal-campaign.json
+npm run traffic:campaign -- --config data/traffic/portal-campaign.json --dry-run
+npm run traffic:campaign -- --config data/traffic/portal-campaign.json --max-chunks 1
+npm run traffic:campaign -- --config data/traffic/portal-campaign.json
+```
+
+It downloads one date/highway partition at a time, waits three seconds between
+request starts by default, streams raw CSV directly to ignored local storage,
+normalizes one bounded chunk at a time, writes SHA-256 checksums and row counts,
+and resumes only after verifying completed files. PORTAL publishes no numeric
+API rate limit; the script therefore uses conservative sequential access and
+backs off on HTTP 429/5xx responses. See
+[the PORTAL campaign research and operating guide](docs/PORTAL_DATA_CAMPAIGN.md)
+before changing the request policy or starting a large recurring collection.
+
+The manual fallback accepts a local CSV or Parquet file of at most 50 MB.
+Required columns are:
 
 | Column | Requirement |
 | --- | --- |
@@ -236,25 +287,37 @@ historical calibration.
 ## Model network diversion
 
 After comparing one or more active road impacts, use **Where might traffic
-divert?** to estimate relative spillover across the surrounding network. Choose
-the synthetic hourly demand, number of origin/destination pairs, assignment
-iterations, and endpoint dispersion radius, then select **Model network
-diversion**.
+divert?** to estimate relative spillover across the surrounding network. Select
+an imported background-traffic profile when one contains volume observations,
+choose the additional corridor demand, number of origin/destination pairs,
+assignment iterations, and endpoint dispersion radius, then select **Model
+network diversion**.
 
-The backend disperses deterministic synthetic trips around the selected route,
-assigns them to the normal and impact-aware directed graphs, and compares the
-resulting edge volumes. It uses estimated road capacities, incremental
-all-or-nothing assignment, the method of successive averages, and an
-uncalibrated BPR congestion curve. Full closures remove only selected directed
-edges; lane restrictions reduce estimated capacity; temporary speeds change
-route cost. The map shows modeled increases as solid orange lines and decreases
-as dashed blue lines, with direction and vehicles/hour changes listed below.
+The backend builds a typical 15-minute directed background snapshot from the
+selected profile's matched September/October weekday observations. Median
+station volume and speed seed covered graph edges. It then disperses additional
+trips around the selected route, removes observed flow from fully closed edges,
+reassigns that displaced flow, and compares the normal and impact-aware edge
+volumes. It uses estimated road capacities, incremental all-or-nothing
+assignment, the method of successive averages, and an uncalibrated BPR
+congestion curve. Full closures remove only selected directed edges; lane
+restrictions reduce estimated capacity; temporary speeds change route cost.
 
-Every result is labeled `modeled_uncalibrated`. The displayed vehicles/hour are
-changes in the configured synthetic demand, not observed road counts. The model
-does not include background regional traffic, traffic signals, queues spilling
-between intersections, live conditions, or historical calibration, so use it
-to compare relative diversion patterns rather than predict actual volumes.
+The result includes a closure-and-traffic-aware recommended route for the
+selected trip. That route is drawn on the map and becomes the route used for
+Google Maps handoff. The map shows modeled increases as solid orange lines and
+decreases as dashed blue lines, with direction and vehicles/hour changes listed
+below. Coverage, source, observation count, time bucket, and displaced observed
+flow remain visible with every run.
+
+Every result remains labeled `modeled_uncalibrated`: observed stations calibrate
+only the covered background edges, while uncovered roads retain class-based
+estimates. Directly observed flow on closed edges is real historical input, but
+its alternate path is modeled. Regional origin/destination demand, traffic
+signals, queues spilling between intersections, live conditions, and complete
+network calibration are not yet included. Use coverage and assumptions when
+judging the result rather than treating sparse station data as a complete
+regional forecast.
 
 Runs report progress and can be cancelled. Completed results are cached in
 SQLite by graph version, model version, and normalized inputs; repeating the
@@ -308,10 +371,50 @@ npm run backup
 ```
 
 Backups are written under ignored `data/backups/<timestamp>/` directories. To
-recover, stop `npm run dev`, make one more copy of the current `data/app.db`,
-then copy the chosen backup's `app.db` into the configured database path and
+verify a backup before depending on it:
+
+```bash
+npm run backup:verify -- data/backups/<timestamp>
+```
+
+Every new backup records SHA-256 checksums and file sizes, and verification also
+runs SQLite `quick_check` on the copied database. To recover, stop `npm run dev`,
+verify the selected backup, make one more copy of the current `data/app.db`, then
+copy the verified backup's `app.db` into the configured database path and
 restart the app. Restore a matching graph manifest or rebuild the graph if the
-scenario screen reports a graph-version review warning.
+scenario screen reports a graph-version review warning. Never overwrite a live
+database while Commute Help is running.
+
+## Troubleshooting
+
+Start with the read-only diagnostic command:
+
+```bash
+npm run doctor
+```
+
+It checks the Python environment, root and frontend Node dependencies, SQLite
+integrity, graph manifest, graph size, and graph checksum. Its recovery messages
+do not expose private addresses or scenario contents.
+
+| Symptom | Recovery |
+| --- | --- |
+| Setup says Python is wrong | Install Python 3.12, remove only the project `.venv`, then rerun `npm run setup`. |
+| Browser says the road graph is unavailable | Run `npm run graph:build`, then restart. If artifacts already exist, run `npm run graph:validate` before rebuilding with `--force`. |
+| Doctor reports a SQLite integrity failure | Stop the app and restore only from a backup that passes `npm run backup:verify -- <backup-directory>`. |
+| Port 5173 or 8787 is already in use | Return to the other Commute Help terminal and press Control-C, then run `npm run dev` once. |
+| Map streets are blank but routes still calculate | The internet basemap tiles are unavailable; snapping and routing still use the local graph. |
+| A saved closure needs review after a graph update | Open the scenario warning and reselect uncertain roads; low-confidence rematches are intentionally never applied. |
+
+### Graph startup performance
+
+The road graph is verified, loaded, projected, and spatially indexed once when
+FastAPI starts. Until that finishes, the readiness banner may remain visible;
+routing requests do not repeat this work. A local profile on August 1, 2026,
+using the current 85,210-node and 213,927-edge regional graph took about 19
+seconds and briefly peaked near 4.2 GB of memory. Graph size and Mac hardware
+will change those numbers, so allow extra startup time and memory after a graph
+rebuild rather than repeatedly restarting the launcher.
 
 ## Checks
 

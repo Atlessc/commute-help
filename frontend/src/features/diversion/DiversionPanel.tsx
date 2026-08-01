@@ -12,6 +12,7 @@ import type {
   ClosureComparisonInput,
   SelectedLocation,
 } from '../../api/routing'
+import { listTrafficProfiles } from '../../api/traffic'
 
 type DiversionPanelProps = {
   origin: SelectedLocation
@@ -39,6 +40,11 @@ export function DiversionPanel({
       onResult(null)
       setJobId(job.id)
     },
+  })
+  const profiles = useQuery({
+    queryKey: ['traffic-profiles'],
+    queryFn: ({ signal }) => listTrafficProfiles(signal),
+    refetchOnWindowFocus: true,
   })
   const job = useQuery({
     queryKey: ['diversion-job', jobId],
@@ -76,6 +82,12 @@ export function DiversionPanel({
   const result = job.data?.result
   const error = starter.error?.message ?? job.error?.message ?? job.data?.error ?? null
 
+  function updateSettings(next: DiversionSettings) {
+    setJobId(null)
+    onResult(null)
+    onSettingsChange(next)
+  }
+
   return (
     <section className="diversion-panel" aria-labelledby="diversion-title">
       <div className="diversion-heading">
@@ -88,16 +100,31 @@ export function DiversionPanel({
         </span>
       </div>
       <p className="panel-intro">
-        Disperse synthetic trips around this route, then compare normal and closure-aware assignments. This estimates relative pressure—not real traffic counts.
+        Reassign traffic around the closure, then route your trip across the resulting network. Select observed background traffic when available; uncovered roads remain modeled estimates.
       </p>
 
       <div className="diversion-controls">
         <label>
-          Synthetic demand
+          Background traffic
+          <select
+            value={settings.trafficProfileId ?? ''}
+            disabled={active}
+            onChange={(event) => updateSettings({ ...settings, trafficProfileId: event.target.value || null })}
+          >
+            <option value="">Synthetic only · no observed background</option>
+            {(profiles.data ?? []).map((profile) => (
+              <option key={profile.id} value={profile.id}>
+                {profile.period === 'weekday_morning' ? 'Weekday AM' : 'Weekday PM'} · {profile.volume_observation_count.toLocaleString()} volume rows · {profile.source_name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Additional corridor demand
           <select
             value={settings.demandVph}
             disabled={active}
-            onChange={(event) => onSettingsChange({ ...settings, demandVph: Number(event.target.value) })}
+            onChange={(event) => updateSettings({ ...settings, demandVph: Number(event.target.value) })}
           >
             {[300, 600, 1200, 2400].map((value) => <option key={value} value={value}>{value.toLocaleString()} vehicles/hour</option>)}
           </select>
@@ -107,7 +134,7 @@ export function DiversionPanel({
           <select
             value={settings.demandPairCount}
             disabled={active}
-            onChange={(event) => onSettingsChange({ ...settings, demandPairCount: Number(event.target.value) })}
+            onChange={(event) => updateSettings({ ...settings, demandPairCount: Number(event.target.value) })}
           >
             {[10, 20, 40, 80].map((value) => <option key={value} value={value}>{value} dispersed pairs</option>)}
           </select>
@@ -117,7 +144,7 @@ export function DiversionPanel({
           <select
             value={settings.iterations}
             disabled={active}
-            onChange={(event) => onSettingsChange({ ...settings, iterations: Number(event.target.value) })}
+            onChange={(event) => updateSettings({ ...settings, iterations: Number(event.target.value) })}
           >
             {[2, 3, 4, 6, 8].map((value) => <option key={value} value={value}>{value} iterations</option>)}
           </select>
@@ -127,7 +154,7 @@ export function DiversionPanel({
           <select
             value={settings.dispersionRadiusM}
             disabled={active}
-            onChange={(event) => onSettingsChange({ ...settings, dispersionRadiusM: Number(event.target.value) })}
+            onChange={(event) => updateSettings({ ...settings, dispersionRadiusM: Number(event.target.value) })}
           >
             <option value={0}>Exact endpoints</option>
             <option value={500}>0.3 miles</option>
@@ -170,7 +197,20 @@ export function DiversionPanel({
             <Metric label="Largest decrease" value={formatFlow(result.max_decrease_vph)} />
             <Metric label="Changed directed edges" value={result.changed_edge_count.toLocaleString()} />
             <Metric label="Residential increase" value={`+${formatFlow(result.residential_increase_vph)}`} />
+            <Metric label="Observed edges" value={result.background_matched_edge_count.toLocaleString()} />
+            <Metric label="Network coverage" value={`${result.background_network_coverage_percent.toFixed(2)}%`} />
           </div>
+          {result.recommended_route ? (
+            <div className="diversion-route-recommendation">
+              <span>Closure and traffic-aware route</span>
+              <strong>{formatDuration(result.recommended_route.travel_time_seconds)}</strong>
+              <small>{formatDistance(result.recommended_route.distance_m)} · now drawn on the map and used for navigation</small>
+            </div>
+          ) : null}
+          <p className="result-note">
+            Background: {result.background_source} · {result.background_bucket} · {result.background_observation_count.toLocaleString()} observations
+            {result.displaced_background_vph > 0 ? ` · ${formatFlow(result.displaced_background_vph)} displaced from closed edges` : ''}
+          </p>
           <div className="spillover-legend" aria-label="Spillover map legend">
             <span><i className="spillover-key spillover-key--increase" /> Increase</span>
             <span><i className="spillover-key spillover-key--decrease" /> Decrease · dashed</span>
@@ -210,4 +250,13 @@ function Metric({ label, value }: { label: string; value: string }) {
 
 function formatFlow(value: number): string {
   return `${Math.round(value).toLocaleString()} veh/hr`
+}
+
+function formatDuration(seconds: number): string {
+  const minutes = Math.max(1, Math.round(seconds / 60))
+  return `${minutes} min`
+}
+
+function formatDistance(meters: number): string {
+  return `${(meters / 1609.344).toFixed(1)} mi`
 }

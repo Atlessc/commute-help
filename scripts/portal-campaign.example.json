@@ -1,0 +1,14 @@
+{
+  "name": "portland-weekdays-fall-2025",
+  "start_date": "2025-09-01",
+  "end_date": "2025-10-31",
+  "highway_ids": [1, 2, 3, 4],
+  "resolution": "00:15:00",
+  "days_of_week": [2, 3, 4, 5, 6],
+  "chunk_days": 1,
+  "delay_ms": 3000,
+  "request_timeout_ms": 120000,
+  "max_retries": 5,
+  "max_response_bytes": 26214400,
+  "max_groups_per_chunk": 250000
+}

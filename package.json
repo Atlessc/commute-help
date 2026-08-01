@@ -9,7 +9,11 @@
     "graph:build": ".venv/bin/python -m scripts.build_graph",
     "graph:validate": ".venv/bin/python -m scripts.validate_graph",
     "backup": ".venv/bin/python -m scripts.backup",
-    "test": "npm run test:backend && npm run test:frontend",
+    "backup:verify": ".venv/bin/python -m scripts.backup --verify",
+    "doctor": ".venv/bin/python -m scripts.doctor",
+    "traffic:campaign": "node scripts/portal-campaign.mjs",
+    "test": "npm run test:campaign && npm run test:backend && npm run test:frontend",
+    "test:campaign": "node --test scripts/portal-campaign.test.mjs",
     "test:backend": ".venv/bin/python -m pytest backend/tests",
     "test:frontend": "npm --prefix frontend run lint && npm --prefix frontend run build"
   },

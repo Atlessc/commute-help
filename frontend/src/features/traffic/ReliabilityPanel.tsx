@@ -1,13 +1,17 @@
 import { useState, type ChangeEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Clock3, Database, LoaderCircle, Upload } from 'lucide-react'
+import { Clock3, Database, DownloadCloud, LoaderCircle, Upload } from 'lucide-react'
 import type { RouteSummary } from '../../api/routing'
 import {
   importTraffic,
+  acquirePortalTraffic,
   listTrafficProfiles,
+  listPortalHighways,
   simulateReliability,
   type ReliabilitySettings,
   type TrafficImportResponse,
+  type PortalAcquireResponse,
+  type PortalAcquireSettings,
 } from '../../api/traffic'
 
 type ReliabilityPanelProps = {
@@ -30,11 +34,18 @@ export function ReliabilityPanel({
   const queryClient = useQueryClient()
   const [sourceName, setSourceName] = useState('')
   const [importResult, setImportResult] = useState<TrafficImportResponse | null>(null)
+  const [portalResult, setPortalResult] = useState<PortalAcquireResponse | null>(null)
+  const [portalWindow, setPortalWindow] = useState<PortalAcquireSettings>(defaultPortalWindow)
   const [lastSimulationKey, setLastSimulationKey] = useState('')
   const profiles = useQuery({
     queryKey: ['traffic-profiles'],
     queryFn: ({ signal }) => listTrafficProfiles(signal),
     refetchOnWindowFocus: true,
+  })
+  const portalHighways = useQuery({
+    queryKey: ['portal-highways'],
+    queryFn: ({ signal }) => listPortalHighways(signal),
+    refetchOnWindowFocus: false,
   })
   const simulation = useMutation({
     mutationFn: () => simulateReliability(route, departureTime, settings),
@@ -47,6 +58,17 @@ export function ReliabilityPanel({
       void queryClient.invalidateQueries({ queryKey: ['traffic-profiles'] })
       if (result.profiles[0]) {
         onSettingsChange({ ...settings, profileId: result.profiles[0].id })
+      }
+    },
+  })
+  const portalAcquisition = useMutation({
+    mutationFn: () => acquirePortalTraffic(portalWindow),
+    onSuccess: (result) => {
+      setPortalResult(result)
+      setImportResult(result.import_result)
+      void queryClient.invalidateQueries({ queryKey: ['traffic-profiles'] })
+      if (result.import_result.profiles[0]) {
+        onSettingsChange({ ...settings, profileId: result.import_result.profiles[0].id })
       }
     },
   })
@@ -246,7 +268,88 @@ export function ReliabilityPanel({
       ) : null}
 
       <details className="traffic-import">
-        <summary><Database size={14} /> Import historical observations</summary>
+        <summary><Database size={14} /> Get historical traffic data</summary>
+        <div className="portal-acquisition">
+          <strong>Download directly from PORTAL</strong>
+          <p>
+            Commute Help fetches public Portland–Vancouver detector observations, joins station and direction metadata, combines lane detectors, converts mph to km/h and interval counts to vehicles/hour, then matches the result to the local road graph.
+          </p>
+          <div className="portal-acquisition-controls">
+            <label>
+              Start date
+              <input
+                type="date"
+                value={portalWindow.startDate}
+                onChange={(event) => setPortalWindow({ ...portalWindow, startDate: event.target.value })}
+              />
+            </label>
+            <label>
+              End date
+              <input
+                type="date"
+                value={portalWindow.endDate}
+                onChange={(event) => setPortalWindow({ ...portalWindow, endDate: event.target.value })}
+              />
+            </label>
+            <label>
+              Resolution
+              <select
+                value={portalWindow.resolution}
+                onChange={(event) => setPortalWindow({
+                  ...portalWindow,
+                  resolution: event.target.value as '00:15:00' | '01:00:00',
+                })}
+              >
+                <option value="00:15:00">15 minutes · recommended</option>
+                <option value="01:00:00">1 hour · smaller download</option>
+              </select>
+            </label>
+          </div>
+          <label className="portal-highway-picker">
+            Highway directions—select up to eight
+            <select
+              multiple
+              size={6}
+              value={portalWindow.highwayIds.map(String)}
+              disabled={portalHighways.isPending || portalAcquisition.isPending}
+              onChange={(event) => {
+                const highwayIds = Array.from(event.target.selectedOptions)
+                  .map((option) => Number(option.value))
+                  .slice(0, 8)
+                setPortalWindow({ ...portalWindow, highwayIds })
+              }}
+            >
+              {(portalHighways.data ?? []).map((highway) => (
+                <option key={highway.id} value={highway.id}>
+                  {highway.name} {highway.direction} · {highway.station_count} stations
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="portal-download"
+            type="button"
+            disabled={portalWindow.highwayIds.length === 0 || portalAcquisition.isPending}
+            onClick={() => portalAcquisition.mutate()}
+          >
+            {portalAcquisition.isPending
+              ? <LoaderCircle className="spin" size={15} />
+              : <DownloadCloud size={15} />}
+            {portalAcquisition.isPending ? 'Downloading and matching…' : 'Get traffic from PORTAL'}
+          </button>
+          {portalHighways.error ? <p className="inline-error">{portalHighways.error.message}</p> : null}
+          {portalAcquisition.error ? <p className="inline-error">{portalAcquisition.error.message}</p> : null}
+          {portalResult ? (
+            <div className="import-quality" role="status">
+              <strong>
+                Downloaded {portalResult.downloaded_observation_count.toLocaleString()} detector rows and normalized {portalResult.normalized_station_count.toLocaleString()} stations
+              </strong>
+              <span>{portalResult.requested_highways.map((highway) => `${highway.name} ${highway.direction}`).join(', ')}</span>
+            </div>
+          ) : null}
+        </div>
+        <div className="manual-traffic-import">
+        <strong>Or import an existing file</strong>
         <p>
           CSV or Parquet, up to 50 MB. Raw files stay unchanged; accepted rows are matched to the local graph and normalized separately.
         </p>
@@ -287,6 +390,7 @@ export function ReliabilityPanel({
         <small className="traffic-schema-note">
           Required: station_or_segment_id, timestamp_local, and speed_kph or travel_time_seconds. Coordinates are required unless the ID exactly matches a graph edge.
         </small>
+        </div>
       </details>
     </section>
   )
@@ -310,6 +414,17 @@ function formatClock(value: string | null): string {
     hour: 'numeric',
     minute: '2-digit',
   }).format(new Date(value))
+}
+
+function defaultPortalWindow(): PortalAcquireSettings {
+  const now = new Date()
+  const year = now.getMonth() >= 10 ? now.getFullYear() : now.getFullYear() - 1
+  return {
+    startDate: `${year}-09-01`,
+    endDate: `${year}-10-31`,
+    highwayIds: [],
+    resolution: '00:15:00',
+  }
 }
 
 function simulationKey(
