@@ -13,6 +13,7 @@ __pycache__/
 
 data/app.db
 data/app.db-*
+data/osm/
 data/**/*.osm.pbf
 data/**/*.graphml
 data/**/*.parquet

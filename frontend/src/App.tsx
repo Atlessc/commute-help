@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Check, Map, Route, ShieldCheck } from 'lucide-react'
-import { getHealth } from './api/system'
+import { getStatus } from './api/system'
 import './App.css'
 
 const workflow = [
@@ -11,16 +11,28 @@ const workflow = [
 ]
 
 function App() {
-  const health = useQuery({
-    queryKey: ['system', 'health'],
-    queryFn: ({ signal }) => getHealth(signal),
+  const system = useQuery({
+    queryKey: ['system', 'status'],
+    queryFn: ({ signal }) => getStatus(signal),
   })
 
-  const statusLabel = health.isPending
+  const statusLabel = system.isPending
     ? 'Connecting to the local service…'
-    : health.isError
+    : system.isError
       ? 'Local service unavailable'
-      : 'Local foundation ready'
+      : system.data.graph.status === 'ready'
+        ? 'Regional road graph ready'
+        : system.data.graph.status === 'error'
+          ? 'Road graph needs attention'
+          : 'Local foundation ready'
+
+  const statusDetail = system.isError
+    ? 'Start both services from the repository with npm run dev.'
+    : system.data?.graph.status === 'ready'
+      ? `${system.data.graph.nodes?.toLocaleString()} nodes loaded once for routing.`
+      : system.data?.graph.status === 'error'
+        ? system.data.graph.message
+        : 'Run npm run graph:build to prepare the Phase 1 road network.'
 
   return (
     <main>
@@ -45,16 +57,14 @@ function App() {
         </p>
 
         <div
-          className={`service-status ${health.isError ? 'service-status--error' : ''}`}
+          className={`service-status ${system.isError || system.data?.graph.status === 'error' ? 'service-status--error' : ''}`}
           role="status"
         >
           <span className="status-dot" aria-hidden="true" />
           <span>
             <strong>{statusLabel}</strong>
             <small>
-              {health.isError
-                ? 'Start both services from the repository with npm run dev.'
-                : 'Routing and map data come next in Phase 1.'}
+              {statusDetail}
             </small>
           </span>
         </div>

@@ -6,6 +6,8 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from backend.app.db.database import DatabaseManager
+from backend.app.schemas.graph import GraphRuntimeStatus
+from backend.app.services.graph_service import GraphService
 
 router = APIRouter(tags=["system"])
 
@@ -18,26 +20,23 @@ class HealthResponse(BaseModel):
     database: Literal["ok"]
 
 
-class GraphStatus(BaseModel):
-    """Graph readiness without implying that Phase 1 is complete."""
-
-    status: Literal["not_configured"]
-    version: None = None
-
-
 class StatusResponse(BaseModel):
-    """Current readiness of Phase 0 application services."""
+    """Current readiness of application services."""
 
     status: Literal["ok"]
     application: str
     version: str
     environment: str
     database: Literal["ok"]
-    graph: GraphStatus
+    graph: GraphRuntimeStatus
 
 
 def _database(request: Request) -> DatabaseManager:
     return request.app.state.database
+
+
+def _graph_service(request: Request) -> GraphService:
+    return request.app.state.graph_service
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -66,5 +65,5 @@ def status(request: Request) -> StatusResponse:
         version=request.app.version,
         environment=settings.environment,
         database="ok",
-        graph=GraphStatus(status="not_configured"),
+        graph=_graph_service(request).runtime_status(),
     )

@@ -14,6 +14,8 @@ def _client(database_path: Path) -> TestClient:
         _env_file=None,
         environment="test",
         database_path=database_path,
+        graph_path=database_path.parent / "missing.graphml",
+        graph_manifest_path=database_path.parent / "missing-manifest.json",
     )
     return TestClient(create_app(settings))
 
@@ -42,7 +44,18 @@ def test_status_discloses_that_the_graph_is_not_configured(tmp_path: Path) -> No
     assert response.json()["graph"] == {
         "status": "not_configured",
         "version": None,
+        "nodes": None,
+        "directed_edges": None,
+        "message": None,
     }
+
+
+def test_graph_manifest_is_unavailable_before_phase_one_build(tmp_path: Path) -> None:
+    with _client(tmp_path / "commute-help.db") as client:
+        response = client.get("/api/graph/manifest")
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "graph_unavailable"
 
 
 def test_database_uses_wal_and_initializes_metadata(tmp_path: Path) -> None:

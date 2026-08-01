@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "graph_version": "2026-07-31-portland-vancouver-v1",
+  "source": "OpenStreetMap via OSMnx Overpass download",
+  "built_at": "2026-07-31T19:17:49.238251-07:00",
+  "region": {
+    "id": "portland-vancouver-v1",
+    "name": "Portland-Vancouver buffered routing region",
+    "bounds": [
+      -123.05,
+      45.25,
+      -122.25,
+      45.85
+    ]
+  },
+  "network_type": "drive",
+  "build_tool": "commute-help-graph-builder-v1 with OSMnx 2.1.1",
+  "validation_passed": true,
+  "metrics": {
+    "nodes": 85210,
+    "directed_edges": 213927,
+    "weakly_connected_components": 97,
+    "largest_weak_component_percent": 99.724
+  },
+  "artifacts": {
+    "graphml": {
+      "filename": "portland-vancouver.graphml",
+      "sha256": "0db77904f3bba60d795cc779aff430b7dc154201d96610ee9c6d6e06cbb7848c",
+      "size_bytes": 286930193
+    },
+    "nodes_parquet": {
+      "filename": "nodes.parquet",
+      "sha256": "eaeb9716e2ff7664c5f6ffcfe3e0523f273ded67167a38511556610556647411",
+      "size_bytes": 3769066
+    },
+    "edges_parquet": {
+      "filename": "edges.parquet",
+      "sha256": "0d9b29f92d938379b86fe2fbdf0140d30db161f2873e68574a29c84a153d7075",
+      "size_bytes": 47892821
+    },
+    "validation_report": {
+      "filename": "validation-report.json",
+      "sha256": "29a4304a1ef8aa88c3e09ae0e4c2878dac04ea2bdee35c4601a81783db40e3c1",
+      "size_bytes": 1187
+    }
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "type": "FeatureCollection",
+  "name": "Portland-Vancouver routing region v1",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "portland-vancouver-v1",
+        "name": "Portland-Vancouver buffered routing region",
+        "description": "A stable rectangular build boundary covering the Portland metropolitan area, Vancouver, Battle Ground, Hillsboro, Gresham, Wilsonville, and Oregon City.",
+        "validationRoutes": [
+          {
+            "name": "Portland to Vancouver civic centers",
+            "origin": [-122.6784, 45.5152],
+            "destination": [-122.6717, 45.6389]
+          },
+          {
+            "name": "Portland airport to Hillsboro",
+            "origin": [-122.5951, 45.5898],
+            "destination": [-122.9898, 45.5229]
+          },
+          {
+            "name": "Oregon City to central Vancouver",
+            "origin": [-122.6068, 45.3573],
+            "destination": [-122.6717, 45.6389]
+          }
+        ]
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-123.05, 45.25],
+            [-122.25, 45.25],
+            [-122.25, 45.85],
+            [-123.05, 45.85],
+            [-123.05, 45.25]
+          ]
+        ]
+      }
+    }
+  ]
+}

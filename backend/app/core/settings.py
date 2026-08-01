@@ -17,6 +17,8 @@ class Settings(BaseSettings):
 
     environment: str = "development"
     database_path: Path = Path("data/app.db")
+    graph_path: Path = Path("data/graphs/portland-vancouver.graphml")
+    graph_manifest_path: Path = Path("data/graphs/graph-manifest.json")
 
 
 @lru_cache

@@ -4,9 +4,10 @@ Commute Help is a local-first web application for comparing normal trips with
 routes affected by planned road closures in the Portland–Vancouver region. It
 is designed for the host Mac and trusted devices on the same local network.
 
-The application is currently at **Phase 0: Foundation and launcher**. The API,
-SQLite database, frontend proxy, and one-command development launcher are in
-place. Road-network generation and routing begin in Phase 1.
+The application has completed **Phase 0: Foundation and launcher** and
+**Phase 1: Local road graph**. The graph tooling provides a fixed regional
+boundary, OpenStreetMap download, normalization, validation, versioned
+artifacts, and one-time backend loading.
 
 ## Requirements
 
@@ -37,7 +38,7 @@ npm run dev
 ```
 
 The launcher starts FastAPI and Vite together and prints the available local
-and LAN URLs. Open <http://localhost:5173>. Press Control-C once to stop both
+and LAN URLs. Open [http://localhost:5173](http://localhost:5173). Press Control-C once to stop both
 processes.
 
 LAN access is intended only on a trusted network. If macOS asks whether Node or
@@ -54,9 +55,45 @@ Git.
 | --- | --- | --- |
 | `COMMUTE_HELP_ENVIRONMENT` | `development` | Runtime label shown by `/api/status` |
 | `COMMUTE_HELP_DATABASE_PATH` | `data/app.db` | Authoritative SQLite database path |
+| `COMMUTE_HELP_GRAPH_PATH` | `data/graphs/portland-vancouver.graphml` | Generated routing graph |
+| `COMMUTE_HELP_GRAPH_MANIFEST_PATH` | `data/graphs/graph-manifest.json` | Version and checksum manifest |
 
 The frontend always calls relative `/api/...` URLs. Vite proxies those requests
 to FastAPI, which keeps the application usable from LAN browsers.
+
+## Build the regional road graph
+
+The graph build downloads the driveable OpenStreetMap network inside the
+committed `data/regions/portland-vancouver-v1.geojson` boundary. It can take
+several minutes and uses substantial disk space. Generated GraphML, GeoParquet,
+and Overpass cache files remain local and are ignored by Git.
+
+```bash
+npm run graph:build
+```
+
+The builder will not replace an existing graph unless the command is rerun as
+`npm run graph:build -- --force`.
+
+The builder adds explicit travel-time, lane, capacity, and penalty defaults,
+preserves direction and OSM identities, then writes:
+
+- `data/graphs/portland-vancouver.graphml`
+- `data/graphs/nodes.parquet`
+- `data/graphs/edges.parquet`
+- `data/graphs/graph-manifest.json`
+- `data/graphs/validation-report.json`
+
+The manifest records checksums, graph version, source, region, artifact sizes,
+and integrity metrics. Re-run the integrity report without downloading data:
+
+```bash
+npm run graph:validate
+```
+
+Restart `npm run dev` after a successful build. `/api/status` will report the
+loaded graph version and counts, while `/api/graph/manifest` returns the
+browser-safe build manifest.
 
 ## Checks
 
@@ -72,8 +109,8 @@ With the application running, the Phase 0 health gate is:
 curl http://localhost:5173/api/health
 ```
 
-The response reports both API and database readiness. `/api/status` also states
-that the routing graph is not configured yet.
+The response reports both API and database readiness. `/api/status` reports
+whether the routing graph is absent, ready, or failed validation/loading.
 
 ## Data and privacy
 
