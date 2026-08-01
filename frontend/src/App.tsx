@@ -1,121 +1,81 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
+import { useQuery } from '@tanstack/react-query'
+import { Check, Map, Route, ShieldCheck } from 'lucide-react'
+import { getHealth } from './api/system'
 import './App.css'
 
+const workflow = [
+  'Choose your trip',
+  'Mark planned closures',
+  'Compare reliable routes',
+  'Save or open in Google Maps',
+]
+
 function App() {
-  const [count, setCount] = useState(0)
+  const health = useQuery({
+    queryKey: ['system', 'health'],
+    queryFn: ({ signal }) => getHealth(signal),
+  })
+
+  const statusLabel = health.isPending
+    ? 'Connecting to the local service…'
+    : health.isError
+      ? 'Local service unavailable'
+      : 'Local foundation ready'
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
+    <main>
+      <header className="site-header">
+        <a className="brand" href="/" aria-label="Commute Help home">
+          <span className="brand-mark" aria-hidden="true">
+            <Route size={21} strokeWidth={2.4} />
+          </span>
+          Commute Help
+        </a>
+        <span className="local-badge">
+          <ShieldCheck size={15} aria-hidden="true" /> Local-first
+        </span>
+      </header>
+
+      <section className="hero" aria-labelledby="page-title">
+        <div className="eyebrow">Portland–Vancouver trip planning</div>
+        <h1 id="page-title">Plan around the road ahead.</h1>
+        <p className="lede">
+          Compare an everyday trip with closure-aware routes, understand arrival
+          risk, and keep reusable plans on your own Mac.
+        </p>
+
+        <div
+          className={`service-status ${health.isError ? 'service-status--error' : ''}`}
+          role="status"
         >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
+          <span className="status-dot" aria-hidden="true" />
+          <span>
+            <strong>{statusLabel}</strong>
+            <small>
+              {health.isError
+                ? 'Start both services from the repository with npm run dev.'
+                : 'Routing and map data come next in Phase 1.'}
+            </small>
+          </span>
         </div>
       </section>
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+      <section className="workflow" aria-labelledby="workflow-title">
+        <div className="section-heading">
+          <Map size={22} aria-hidden="true" />
+          <h2 id="workflow-title">The planned workflow</h2>
+        </div>
+        <ol>
+          {workflow.map((step, index) => (
+            <li key={step}>
+              <span className="step-number">{index + 1}</span>
+              <span>{step}</span>
+              <Check size={17} aria-hidden="true" />
+            </li>
+          ))}
+        </ol>
+      </section>
+    </main>
   )
 }
 
