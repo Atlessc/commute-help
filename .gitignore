@@ -20,8 +20,11 @@ data/**/*.parquet
 data/traffic/raw/
 data/traffic/normalized/
 data/traffic/profiles/
+data/traffic/processed/
 data/traffic/campaigns/
 data/traffic/portal-campaign*.json
 data/traffic/traffic-profile-manifest.json
 data/exports/
 data/backups/
+
+AGENTS.md

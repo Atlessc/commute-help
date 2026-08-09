@@ -40,6 +40,17 @@ export type DiversionEdgeChange = {
   }
 }
 
+export type DiversionPlaybackEdge = {
+  edge_id: string
+  baseline_vph: number
+  scenario_vph: number
+  volume_capacity_ratio: number
+  geometry: {
+    type: 'LineString'
+    coordinates: [number, number][]
+  }
+}
+
 export type DiversionResult = {
   evidence_level: 'modeled_uncalibrated'
   graph_version: string
@@ -64,6 +75,7 @@ export type DiversionResult = {
   residential_increase_vph: number
   recommended_route: RouteSummary | null
   edge_changes: DiversionEdgeChange[]
+  playback_edges?: DiversionPlaybackEdge[]
   assumptions: string[]
 }
 

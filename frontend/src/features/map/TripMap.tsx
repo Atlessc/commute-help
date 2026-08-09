@@ -13,12 +13,14 @@ import mapLibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import type {
   ClosureDirectionCandidate,
+  RoadRestriction,
   RouteSummary,
   SelectedLocation,
 } from '../../api/routing'
 import type { SelectionMode } from '../../stores/tripStore'
 import type { ScenarioMapState } from '../../api/scenarios'
 import type { DiversionEdgeChange } from '../../api/diversion'
+import type { SimulationMapFrame } from '../simulation/simulationPlayback'
 import './TripMap.css'
 
 setWorkerUrl(mapLibreWorkerUrl)
@@ -54,8 +56,10 @@ type TripMapProps = {
   destination: SelectedLocation | null
   route: RouteSummary | null
   scenarioRoute: RouteSummary | null
-  closureDirections: ClosureDirectionCandidate[]
+  closureDirections: ClosureMapDirection[]
   spilloverEdges: DiversionEdgeChange[]
+  simulationFrame: SimulationMapFrame | null
+  simulationPlaying: boolean
   selectionMode: SelectionMode
   selectionPending: boolean
   closurePicking: boolean
@@ -66,6 +70,10 @@ type TripMapProps = {
   onMapStateChange: (state: ScenarioMapState) => void
 }
 
+export type ClosureMapDirection = ClosureDirectionCandidate & {
+  restrictionType: RoadRestriction['type']
+}
+
 export default function TripMap({
   origin,
   destination,
@@ -73,6 +81,8 @@ export default function TripMap({
   scenarioRoute,
   closureDirections,
   spilloverEdges,
+  simulationFrame,
+  simulationPlaying,
   selectionMode,
   selectionPending,
   closurePicking,
@@ -92,6 +102,8 @@ export default function TripMap({
   const scenarioRouteRef = useRef(scenarioRoute)
   const closureDirectionsRef = useRef(closureDirections)
   const spilloverEdgesRef = useRef(spilloverEdges)
+  const simulationFrameRef = useRef(simulationFrame)
+  const lastFollowProgressRef = useRef(-1)
   const mapStateChangeRef = useRef(onMapStateChange)
   const mapStateRef = useRef(mapState)
   const [mapError, setMapError] = useState<string | null>(null)
@@ -123,6 +135,10 @@ export default function TripMap({
   useEffect(() => {
     spilloverEdgesRef.current = spilloverEdges
   }, [spilloverEdges])
+
+  useEffect(() => {
+    simulationFrameRef.current = simulationFrame
+  }, [simulationFrame])
 
   useEffect(() => {
     mapStateChangeRef.current = onMapStateChange
@@ -186,15 +202,42 @@ export default function TripMap({
         data: closureFeature(closureDirectionsRef.current),
       })
       map.addLayer({
-        id: 'closure-selection-line',
+        id: 'closure-full-line',
         type: 'line',
         source: 'closure-selection',
+        filter: ['==', ['get', 'restrictionType'], 'full'],
         paint: {
           'line-color': '#c3462d',
           'line-width': 11,
           'line-opacity': 0.9,
         },
         layout: { 'line-cap': 'round', 'line-join': 'round' },
+      })
+      map.addLayer({
+        id: 'closure-lane-line',
+        type: 'line',
+        source: 'closure-selection',
+        filter: ['==', ['get', 'restrictionType'], 'lane'],
+        paint: {
+          'line-color': '#4d963d',
+          'line-width': 9,
+          'line-opacity': 0.95,
+          'line-dasharray': [0.1, 1.35],
+        },
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+      })
+      map.addLayer({
+        id: 'closure-speed-line',
+        type: 'line',
+        source: 'closure-selection',
+        filter: ['==', ['get', 'restrictionType'], 'speed'],
+        paint: {
+          'line-color': '#c48320',
+          'line-width': 8,
+          'line-opacity': 0.95,
+          'line-dasharray': [1.2, 1.2],
+        },
+        layout: { 'line-cap': 'butt', 'line-join': 'round' },
       })
       map.addSource('scenario-route', {
         type: 'geojson',
@@ -225,6 +268,85 @@ export default function TripMap({
       map.addSource('spillover-edges', {
         type: 'geojson',
         data: spilloverFeature(spilloverEdgesRef.current),
+      })
+      map.addSource('simulation-agents', {
+        type: 'geojson',
+        data: simulationAgentsFeature(simulationFrameRef.current),
+      })
+      map.addLayer({
+        id: 'simulation-agents-points',
+        type: 'circle',
+        source: 'simulation-agents',
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 2.5, 14, 4.2],
+          'circle-color': [
+            'match',
+            ['get', 'congestion'],
+            'heavy', '#d52f2f',
+            'slow', '#e9a126',
+            '#39a852',
+          ],
+          'circle-opacity': ['get', 'opacity'],
+          'circle-stroke-color': 'rgba(255,255,255,0.72)',
+          'circle-stroke-width': 0.35,
+        },
+      })
+      map.addSource('simulation-projected-route', {
+        type: 'geojson',
+        data: simulationRouteFeature(simulationFrameRef.current?.projectedRoute ?? []),
+      })
+      map.addLayer({
+        id: 'simulation-projected-route-casing',
+        type: 'line',
+        source: 'simulation-projected-route',
+        paint: { 'line-color': '#f8f7f0', 'line-width': 10, 'line-opacity': 0.92 },
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+      })
+      map.addLayer({
+        id: 'simulation-projected-route-line',
+        type: 'line',
+        source: 'simulation-projected-route',
+        paint: { 'line-color': '#22a3aa', 'line-width': 5, 'line-opacity': 0.9, 'line-dasharray': [2, 1.2] },
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+      })
+      map.addSource('simulation-traveled-route', {
+        type: 'geojson',
+        data: simulationRouteFeature(simulationFrameRef.current?.traveledRoute ?? []),
+      })
+      map.addLayer({
+        id: 'simulation-traveled-route-casing',
+        type: 'line',
+        source: 'simulation-traveled-route',
+        paint: { 'line-color': '#f8f7f0', 'line-width': 11, 'line-opacity': 0.96 },
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+      })
+      map.addLayer({
+        id: 'simulation-traveled-route-line',
+        type: 'line',
+        source: 'simulation-traveled-route',
+        paint: { 'line-color': '#156bd1', 'line-width': 6, 'line-opacity': 1 },
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+      })
+      map.addSource('simulation-trip-agent', {
+        type: 'geojson',
+        data: simulationTripFeature(simulationFrameRef.current?.tripCoordinate ?? null),
+      })
+      map.addLayer({
+        id: 'simulation-trip-agent-halo',
+        type: 'circle',
+        source: 'simulation-trip-agent',
+        paint: { 'circle-radius': 12, 'circle-color': '#25aab0', 'circle-opacity': 0.2 },
+      })
+      map.addLayer({
+        id: 'simulation-trip-agent-dot',
+        type: 'circle',
+        source: 'simulation-trip-agent',
+        paint: {
+          'circle-radius': 6,
+          'circle-color': '#ffffff',
+          'circle-stroke-color': '#15959e',
+          'circle-stroke-width': 3,
+        },
       })
       map.addLayer(
         {
@@ -275,6 +397,7 @@ export default function TripMap({
       )
       syncRouteSource(map, routeRef.current)
       syncSpilloverSource(map, spilloverEdgesRef.current)
+      syncSimulationSources(map, simulationFrameRef.current)
       fitRoute(map, routeRef.current)
     })
     map.on('click', (event: MapMouseEvent) => {
@@ -391,6 +514,35 @@ export default function TripMap({
 
   useEffect(() => {
     const map = mapRef.current
+    if (!map) return
+    const sync = () => syncSimulationSources(map, simulationFrame)
+    if (!syncSimulationSources(map, simulationFrame)) {
+      map.once('styledata', sync)
+      return () => {
+        map.off('styledata', sync)
+      }
+    }
+  }, [simulationFrame])
+
+  useEffect(() => {
+    const map = mapRef.current
+    const coordinate = simulationFrame?.tripCoordinate
+    if (!map || !simulationPlaying || !coordinate) return
+    if (Math.abs(simulationFrame.progress - lastFollowProgressRef.current) < 0.01) return
+    lastFollowProgressRef.current = simulationFrame.progress
+    map.easeTo({
+      center: coordinate,
+      zoom: Math.min(map.getZoom(), 11.6),
+      duration: 280,
+    })
+  }, [simulationFrame, simulationPlaying])
+
+  useEffect(() => {
+    if (!simulationPlaying) lastFollowProgressRef.current = -1
+  }, [simulationPlaying])
+
+  useEffect(() => {
+    const map = mapRef.current
     if (!map || !mapState) return
     const center = map.getCenter()
     if (
@@ -420,6 +572,32 @@ export default function TripMap({
               : `Click the map to set ${selectionMode === 'origin' ? 'Point A' : 'Point B'}`}
         </div>
       ) : null}
+      {closureDirections.length > 0 ? (
+        <div className="map-closure-legend" aria-label="Road impact map legend">
+          {closureDirections.some(({ restrictionType }) => restrictionType === 'full') ? (
+            <span><i className="map-legend-line map-legend-line--full" /> Full closure</span>
+          ) : null}
+          {closureDirections.some(({ restrictionType }) => restrictionType === 'lane') ? (
+            <span><i className="map-legend-line map-legend-line--lane" /> Reduced lanes</span>
+          ) : null}
+          {closureDirections.some(({ restrictionType }) => restrictionType === 'speed') ? (
+            <span><i className="map-legend-line map-legend-line--speed" /> Reduced speed</span>
+          ) : null}
+        </div>
+      ) : null}
+      {simulationFrame?.tripCoordinate ? (
+        <div className="sim-trip-callout" role="status">
+          <strong>{simulationFrame.rerouted ? 'Rerouted · traffic-aware path' : 'SIM · your trip'}</strong>
+          <span>{simulationFrame.rerouted ? 'Future route updated; blue history is preserved.' : 'Blue is traveled · teal is ahead.'}</span>
+        </div>
+      ) : null}
+      {simulationFrame ? (
+        <div className="simulation-map-legend" aria-label="Traffic simulation legend">
+          <span>Fast</span><i className="agent-key agent-key--free" />
+          <i className="agent-key agent-key--slow" />
+          <i className="agent-key agent-key--heavy" /><span>Slow</span>
+        </div>
+      ) : null}
       {mapError ? <div className="map-error">{mapError}</div> : null}
     </section>
   )
@@ -439,7 +617,7 @@ function routeFeature(route: RouteSummary | null) {
   }
 }
 
-function closureFeature(directions: ClosureDirectionCandidate[]) {
+function closureFeature(directions: ClosureMapDirection[]) {
   return {
     type: 'FeatureCollection' as const,
     features: directions.map((direction) => ({
@@ -447,6 +625,7 @@ function closureFeature(directions: ClosureDirectionCandidate[]) {
       properties: {
         edgeId: direction.edge.edge_id,
         direction: direction.direction_label,
+        restrictionType: direction.restrictionType,
       },
       geometry: direction.geometry,
     })),
@@ -468,6 +647,47 @@ function spilloverFeature(edges: DiversionEdgeChange[]) {
   }
 }
 
+function simulationAgentsFeature(frame: SimulationMapFrame | null) {
+  return {
+    type: 'FeatureCollection' as const,
+    features: (frame?.agents ?? []).map((agent) => ({
+      type: 'Feature' as const,
+      properties: {
+        id: agent.id,
+        congestion: agent.congestion,
+        opacity: agent.opacity,
+      },
+      geometry: { type: 'Point' as const, coordinates: agent.coordinate },
+    })),
+  }
+}
+
+function simulationRouteFeature(coordinates: [number, number][]) {
+  return coordinates.length >= 2
+    ? {
+        type: 'FeatureCollection' as const,
+        features: [{
+          type: 'Feature' as const,
+          properties: {},
+          geometry: { type: 'LineString' as const, coordinates },
+        }],
+      }
+    : EMPTY_ROUTE
+}
+
+function simulationTripFeature(coordinate: [number, number] | null) {
+  return coordinate
+    ? {
+        type: 'FeatureCollection' as const,
+        features: [{
+          type: 'Feature' as const,
+          properties: {},
+          geometry: { type: 'Point' as const, coordinates: coordinate },
+        }],
+      }
+    : EMPTY_ROUTE
+}
+
 function syncRouteSource(
   map: MapLibreMap,
   route: RouteSummary | null,
@@ -481,7 +701,7 @@ function syncRouteSource(
 
 function syncClosureSource(
   map: MapLibreMap,
-  directions: ClosureDirectionCandidate[],
+  directions: ClosureMapDirection[],
 ): boolean {
   const source = map.getSource('closure-selection') as GeoJSONSource | undefined
   if (!source) return false
@@ -496,6 +716,22 @@ function syncSpilloverSource(
   const source = map.getSource('spillover-edges') as GeoJSONSource | undefined
   if (!source) return false
   source.setData(spilloverFeature(edges))
+  return true
+}
+
+function syncSimulationSources(
+  map: MapLibreMap,
+  frame: SimulationMapFrame | null,
+): boolean {
+  const agents = map.getSource('simulation-agents') as GeoJSONSource | undefined
+  const traveled = map.getSource('simulation-traveled-route') as GeoJSONSource | undefined
+  const projected = map.getSource('simulation-projected-route') as GeoJSONSource | undefined
+  const trip = map.getSource('simulation-trip-agent') as GeoJSONSource | undefined
+  if (!agents || !traveled || !projected || !trip) return false
+  agents.setData(simulationAgentsFeature(frame))
+  traveled.setData(simulationRouteFeature(frame?.traveledRoute ?? []))
+  projected.setData(simulationRouteFeature(frame?.projectedRoute ?? []))
+  trip.setData(simulationTripFeature(frame?.tripCoordinate ?? null))
   return true
 }
 

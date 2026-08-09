@@ -1,0 +1,8 @@
+origin,destination,period,trips,vehicle_class
+Z1,Z2,AM,1200,SOV
+Z2,Z1,AM,1100,SOV
+X1,Z1,AM,300,SOV
+Z1,X1,AM,250,SOV
+Z1,Z2,PM,1300,SOV
+Z2,Z1,PM,1400,SOV
+X1,X1,PM,50,heavy_truck

@@ -136,7 +136,7 @@ def test_diversion_changes_corridors_and_reuses_cache(tmp_path: Path) -> None:
     assert finished["status"] == "completed", finished
     result = finished["result"]
     assert result["evidence_level"] == "modeled_uncalibrated"
-    assert result["model_version"] == "background-flow-msa-bpr-v2"
+    assert result["model_version"] == "background-flow-msa-bpr-v3"
     assert result["background_source"] == "Synthetic demand only"
     assert result["background_matched_edge_count"] == 0
     assert result["recommended_route"] is not None
@@ -154,6 +154,13 @@ def test_diversion_changes_corridors_and_reuses_cache(tmp_path: Path) -> None:
         for change in result["edge_changes"]
     )
     assert all(len(change["geometry"]["coordinates"]) >= 2 for change in result["edge_changes"])
+    assert result["playback_edges"]
+    assert all(
+        len(edge["geometry"]["coordinates"]) >= 2
+        and edge["baseline_vph"] >= 0
+        and edge["scenario_vph"] >= 0
+        for edge in result["playback_edges"]
+    )
     assert cached.status_code == 202
     assert cached.json()["status"] == "completed"
     assert cached.json()["cached"] is True

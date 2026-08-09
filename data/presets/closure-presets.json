@@ -1,0 +1,1219 @@
+{
+  "schema_version": 1,
+  "presets": [
+    {
+      "id": "i5-rose-quarter-southbound-fall-2026",
+      "name": "I-5 Rose Quarter southbound closure",
+      "summary": "Fall 2026 I-5 southbound closure between I-405 and I-84, including marked ramp closures and the one-lane Broadway/Weidler local-access path.",
+      "graph_version": "2026-07-31-portland-vancouver-v1",
+      "timing": {
+        "mainline_starts_at": "2026-09-11T22:00:00-07:00",
+        "ramp_closures_may_start_at": "2026-09-11T21:00:00-07:00",
+        "duration_note": "Around the clock for up to five weeks; the highway will reopen as soon as work is complete.",
+        "exact_end_confirmed": false
+      },
+      "notices": [
+        "The exact reopening time has not been published, so this preset intentionally has no automatic end time.",
+        "I-5 northbound, the I-5 southbound detour to I-405, I-84 westbound to I-5 southbound, and the Broadway/Weidler exit remain open and are not restricted by this preset.",
+        "The preset represents the supplied project map on graph version 2026-07-31-portland-vancouver-v1; review it after any graph rebuild or official closure update."
+      ],
+      "sources": [
+        {
+          "title": "I-5 Rose Quarter Construction Travel Impacts",
+          "url": "https://www.i5rosequarter.org/current-construction-travel-impacts/",
+          "checked_on": "2026-08-08"
+        },
+        {
+          "title": "I-5 Rose Quarter Frequently Asked Questions",
+          "url": "https://www.i5rosequarter.org/faqs/",
+          "checked_on": "2026-08-08"
+        }
+      ],
+      "sections": [
+        {
+          "selection": {
+            "graph_version": "2026-07-31-portland-vancouver-v1",
+            "road_name": "N Greeley Avenue on-ramp to I-5 southbound",
+            "distance_m": 2.8,
+            "selected_edge_id": "24e87e49a028181377d95054",
+            "directions": [
+              {
+                "edge": {
+                  "edge_id": "24e87e49a028181377d95054",
+                  "u": "1321229832",
+                  "v": "254805392",
+                  "key": 0,
+                  "road_name": "Unnamed road",
+                  "road_class": "motorway_link",
+                  "osm_way_ids": [
+                    "124811214",
+                    "33194329",
+                    "5514016"
+                  ],
+                  "geometry_fingerprint": "82ce6dadc1606682065d29f3eee61161b096e6565606281632ecad5bf9b65122",
+                  "lanes": 1.0,
+                  "maxspeed_kph": 70.0
+                },
+                "direction_label": "Southeastbound",
+                "geometry": {
+                  "type": "LineString",
+                  "coordinates": [
+                    [
+                      -122.6822981,
+                      45.5461782
+                    ],
+                    [
+                      -122.682063,
+                      45.5459649
+                    ],
+                    [
+                      -122.6819498,
+                      45.5459073
+                    ],
+                    [
+                      -122.6816319,
+                      45.5457595
+                    ],
+                    [
+                      -122.6812832,
+                      45.5456473
+                    ],
+                    [
+                      -122.678158,
+                      45.5448139
+                    ],
+                    [
+                      -122.6778643,
+                      45.5447388
+                    ],
+                    [
+                      -122.6766053,
+                      45.5444737
+                    ],
+                    [
+                      -122.6764749,
+                      45.5444423
+                    ],
+                    [
+                      -122.6763473,
+                      45.5444039
+                    ],
+                    [
+                      -122.6762172,
+                      45.5443565
+                    ],
+                    [
+                      -122.6760621,
+                      45.5442877
+                    ],
+                    [
+                      -122.6758134,
+                      45.54416
+                    ],
+                    [
+                      -122.6756164,
+                      45.5440354
+                    ],
+                    [
+                      -122.6754416,
+                      45.5439644
+                    ]
+                  ]
+                }
+              }
+            ]
+          },
+          "selected_edge_ids": [
+            "24e87e49a028181377d95054"
+          ],
+          "restriction": {
+            "type": "full"
+          },
+          "label": "N Greeley Avenue on-ramp to I-5 southbound"
+        },
+        {
+          "selection": {
+            "graph_version": "2026-07-31-portland-vancouver-v1",
+            "road_name": "I-5 southbound local-access lane: I-405 split to NE Skidmore Street",
+            "distance_m": 0.6,
+            "selected_edge_id": "ffc70d7c27a17a7520a31889",
+            "directions": [
+              {
+                "edge": {
+                  "edge_id": "ffc70d7c27a17a7520a31889",
+                  "u": "254805392",
+                  "v": "40382443",
+                  "key": 0,
+                  "road_name": "Unnamed road",
+                  "road_class": "motorway",
+                  "osm_way_ids": [
+                    "123689406"
+                  ],
+                  "geometry_fingerprint": "3932ca204b2767355c07b2351a2e9b1c6778a00a419ce6adedbcb31d67571a53",
+                  "lanes": 3.0,
+                  "maxspeed_kph": 80.467
+                },
+                "direction_label": "Southeastbound",
+                "geometry": {
+                  "type": "LineString",
+                  "coordinates": [
+                    [
+                      -122.6754416,
+                      45.5439644
+                    ],
+                    [
+                      -122.6729714,
+                      45.5418631
+                    ]
+                  ]
+                }
+              }
+            ]
+          },
+          "selected_edge_ids": [
+            "ffc70d7c27a17a7520a31889"
+          ],
+          "restriction": {
+            "type": "lane",
+            "remaining_lanes": 1.0
+          },
+          "label": "I-5 southbound local-access lane: I-405 split to NE Skidmore Street"
+        },
+        {
+          "selection": {
+            "graph_version": "2026-07-31-portland-vancouver-v1",
+            "road_name": "I-5 southbound local-access lane: NE Skidmore Street to Broadway/Weidler approach",
+            "distance_m": 2.2,
+            "selected_edge_id": "129e2d9977ad2e4ebc2b0055",
+            "directions": [
+              {
+                "edge": {
+                  "edge_id": "129e2d9977ad2e4ebc2b0055",
+                  "u": "40382443",
+                  "v": "40397036",
+                  "key": 0,
+                  "road_name": "Unnamed road",
+                  "road_class": "motorway",
+                  "osm_way_ids": [
+                    "1207621006",
+                    "1207621007",
+                    "30474343",
+                    "51758604"
+                  ],
+                  "geometry_fingerprint": "e0c40ccecee0086beebe0be7dc6f5dddfca331a56b90c7b8f6ffecce062d964a",
+                  "lanes": 4.0,
+                  "maxspeed_kph": 80.467
+                },
+                "direction_label": "Southeastbound",
+                "geometry": {
+                  "type": "LineString",
+                  "coordinates": [
+                    [
+                      -122.6729714,
+                      45.5418631
+                    ],
+                    [
+                      -122.6723735,
+                      45.5413677
+                    ],
+                    [
+                      -122.6720733,
+                      45.541079
+                    ],
+                    [
+                      -122.6719115,
+                      45.5409013
+                    ],
+                    [
+                      -122.6717211,
+                      45.5406965
+                    ],
+                    [
+                      -122.6716189,
+                      45.5405729
+                    ],
+                    [
+                      -122.6709525,
+                      45.539796
+                    ],
+                    [
+                      -122.6707107,
+                      45.5395092
+                    ],
+                    [
+                      -122.6700329,
+                      45.5387051
+                    ],
+                    [
+                      -122.6697771,
+                      45.538404
+                    ],
+                    [
+                      -122.6692674,
+                      45.537804
+                    ]
+                  ]
+                }
+              }
+            ]
+          },
+          "selected_edge_ids": [
+            "129e2d9977ad2e4ebc2b0055"
+          ],
+          "restriction": {
+            "type": "lane",
+            "remaining_lanes": 1.0
+          },
+          "label": "I-5 southbound local-access lane: NE Skidmore Street to Broadway/Weidler approach"
+        },
+        {
+          "selection": {
+            "graph_version": "2026-07-31-portland-vancouver-v1",
+            "road_name": "I-5 southbound local-access lane: Broadway/Weidler exit approach",
+            "distance_m": 0.3,
+            "selected_edge_id": "14870ceaf3170dbf2f3d21e3",
+            "directions": [
+              {
+                "edge": {
+                  "edge_id": "14870ceaf3170dbf2f3d21e3",
+                  "u": "40397036",
+                  "v": "1343610044",
+                  "key": 0,
+                  "road_name": "Unnamed road",
+                  "road_class": "motorway_link",
+                  "osm_way_ids": [
+                    "1391120164",
+                    "5511234"
+                  ],
+                  "geometry_fingerprint": "d19dd1a3b89fe052e1bd3d5ac07b7c70f095ba60649ce1fd93fcaa380e0a4487",
+                  "lanes": 3.0,
+                  "maxspeed_kph": 70.0
+                },
+                "direction_label": "Southbound",
+                "geometry": {
+                  "type": "LineString",
+                  "coordinates": [
+                    [
+                      -122.6692674,
+                      45.537804
+                    ],
+                    [
+                      -122.6692539,
+                      45.5376355
+                    ],
+                    [
+                      -122.668899,
+                      45.5371027
+                    ],
+                    [
+                      -122.6685609,
+                      45.536636
+                    ],
+                    [
+                      -122.6683521,
+                      45.5362787
+                    ],
+                    [
+                      -122.6681617,
+                      45.535947
+                    ],
+                    [
+                      -122.6680531,
+                      45.5357307
+                    ],
+                    [
+                      -122.6679655,
+                      45.5355233
+                    ]
+                  ]
+                }
+              }
+            ]
+          },
+          "selected_edge_ids": [
+            "14870ceaf3170dbf2f3d21e3"
+          ],
+          "restriction": {
+            "type": "lane",
+            "remaining_lanes": 1.0
+          },
+          "label": "I-5 southbound local-access lane: Broadway/Weidler exit approach"
+        },
+        {
+          "selection": {
+            "graph_version": "2026-07-31-portland-vancouver-v1",
+            "road_name": "I-5 southbound mainline: Broadway/Weidler split to Moda Center",
+            "distance_m": 1.7,
+            "selected_edge_id": "4abccb925b13df5f7002b32e",
+            "directions": [
+              {
+                "edge": {
+                  "edge_id": "4abccb925b13df5f7002b32e",
+                  "u": "40397036",
+                  "v": "40413533",
+                  "key": 0,
+                  "road_name": "Unnamed road",
+                  "road_class": "motorway",
+                  "osm_way_ids": [
+                    "119112613",
+                    "1436859454",
+                    "160390323"
+                  ],
+                  "geometry_fingerprint": "65271f54e55f82d0a50c974837b35f83d92229d3876170e3617796c0a058515e",
+                  "lanes": 3.0,
+                  "maxspeed_kph": 80.467
+                },
+                "direction_label": "Southeastbound",
+                "geometry": {
+                  "type": "LineString",
+                  "coordinates": [
+                    [
+                      -122.6692674,
+                      45.537804
+                    ],
+                    [
+                      -122.6688996,
+                      45.5373789
+                    ],
+                    [
+                      -122.6685666,
+                      45.5370076
+                    ],
+                    [
+                      -122.6684213,
+                      45.5368362
+                    ],
+                    [
+                      -122.6680378,
+                      45.5363837
+                    ],
+                    [
+                      -122.6675316,
+                      45.5357755
+                    ],
+                    [
+                      -122.6670809,
+                      45.5352298
+                    ],
+                    [
+                      -122.6668777,
+                      45.5349827
+                    ],
+                    [
+                      -122.6666889,
+                      45.5347317
+                    ],
+                    [
+                      -122.6665418,
+                      45.5345435
+                    ],
+                    [
+                      -122.6663242,
+                      45.5342109
+                    ],
+                    [
+                      -122.6661678,
+                      45.5339618
+                    ],
+                    [
+                      -122.66603,
+                      45.533711
+                    ],
+                    [
+                      -122.6659235,
+                      45.5335031
+                    ],
+                    [
+                      -122.6658326,
+                      45.5333099
+                    ],
+                    [
+                      -122.6657024,
+                      45.5330004
+                    ],
+                    [
+                      -122.6655576,
+                      45.5325749
+                    ],
+                    [
+                      -122.665489,
+                      45.532309
+                    ],
+                    [
+                      -122.6654359,
+                      45.5320316
+                    ],
+                    [
+                      -122.6654057,
+                      45.5316788
+                    ]
+                  ]
+                }
+              }
+            ]
+          },
+          "selected_edge_ids": [
+            "4abccb925b13df5f7002b32e"
+          ],
+          "restriction": {
+            "type": "full"
+          },
+          "label": "I-5 southbound mainline: Broadway/Weidler split to Moda Center"
+        },
+        {
+          "selection": {
+            "graph_version": "2026-07-31-portland-vancouver-v1",
+            "road_name": "NE Wheeler Avenue/Moda Center on-ramp to I-5 southbound",
+            "distance_m": 3.7,
+            "selected_edge_id": "04ebc1bc05350fda6767b658",
+            "directions": [
+              {
+                "edge": {
+                  "edge_id": "04ebc1bc05350fda6767b658",
+                  "u": "40413546",
+                  "v": "40413533",
+                  "key": 0,
+                  "road_name": "Unnamed road",
+                  "road_class": "motorway_link",
+                  "osm_way_ids": [
+                    "5513565",
+                    "604724908"
+                  ],
+                  "geometry_fingerprint": "b5189d6703a27d5840974f34506be2c444087b691685331f7234d77a00c77644",
+                  "lanes": 2.0,
+                  "maxspeed_kph": 70.0
+                },
+                "direction_label": "Southeastbound",
+                "geometry": {
+                  "type": "LineString",
+                  "coordinates": [
+                    [
+                      -122.6667439,
+                      45.5330508
+                    ],
+                    [
+                      -122.6666038,
+                      45.5330232
+                    ],
+                    [
+                      -122.6664823,
+                      45.5329878
+                    ],
+                    [
+                      -122.666265,
+                      45.532891
+                    ],
+                    [
+                      -122.666082,
+                      45.532792
+                    ],
+                    [
+                      -122.665946,
+                      45.532691
+                    ],
+                    [
+                      -122.6658458,
+                      45.532601
+                    ],
+                    [
+                      -122.665778,
+                      45.532533
+                    ],
+                    [
+                      -122.6656974,
+                      45.5324174
+                    ],
+                    [
+                      -122.6656472,
+                      45.5323217
+                    ],
+                    [
+                      -122.6655806,
+                      45.5321788
+                    ],
+                    [
+                      -122.6654057,
+                      45.5316788
+                    ]
+                  ]
+                }
+              }
+            ]
+          },
+          "selected_edge_ids": [
+            "04ebc1bc05350fda6767b658"
+          ],
+          "restriction": {
+            "type": "full"
+          },
+          "label": "NE Wheeler Avenue/Moda Center on-ramp to I-5 southbound"
+        },
+        {
+          "selection": {
+            "graph_version": "2026-07-31-portland-vancouver-v1",
+            "road_name": "I-5 southbound mainline: Moda Center to I-84 split",
+            "distance_m": 2.2,
+            "selected_edge_id": "17f9941473ebde90e14de041",
+            "directions": [
+              {
+                "edge": {
+                  "edge_id": "17f9941473ebde90e14de041",
+                  "u": "40413533",
+                  "v": "3427976322",
+                  "key": 0,
+                  "road_name": "Unnamed road",
+                  "road_class": "motorway",
+                  "osm_way_ids": [
+                    "119112613",
+                    "1245745262",
+                    "30288757",
+                    "30474367"
+                  ],
+                  "geometry_fingerprint": "3ff1f28a0f23760d70f210f853d2e65c955e0032a4e7b8dd1b50207bc3804b6d",
+                  "lanes": 3.0,
+                  "maxspeed_kph": 80.467
+                },
+                "direction_label": "Southbound",
+                "geometry": {
+                  "type": "LineString",
+                  "coordinates": [
+                    [
+                      -122.6654057,
+                      45.5316788
+                    ],
+                    [
+                      -122.6653699,
+                      45.5313542
+                    ],
+                    [
+                      -122.6653455,
+                      45.5310017
+                    ],
+                    [
+                      -122.6653425,
+                      45.5297975
+                    ],
+                    [
+                      -122.6653609,
+                      45.5288916
+                    ],
+                    [
+                      -122.6653626,
+                      45.5286395
+                    ]
+                  ]
+                }
+              }
+            ]
+          },
+          "selected_edge_ids": [
+            "17f9941473ebde90e14de041"
+          ],
+          "restriction": {
+            "type": "full"
+          },
+          "label": "I-5 southbound mainline: Moda Center to I-84 split"
+        },
+        {
+          "selection": {
+            "graph_version": "2026-07-31-portland-vancouver-v1",
+            "road_name": "I-5 southbound ramp to I-84 eastbound",
+            "distance_m": 3.8,
+            "selected_edge_id": "f47d9782ac8319b615c3859a",
+            "directions": [
+              {
+                "edge": {
+                  "edge_id": "f47d9782ac8319b615c3859a",
+                  "u": "3427976322",
+                  "v": "3416907094",
+                  "key": 0,
+                  "road_name": "Unnamed road",
+                  "road_class": "motorway_link",
+                  "osm_way_ids": [
+                    "1467196494",
+                    "160254307",
+                    "23629712",
+                    "356882078"
+                  ],
+                  "geometry_fingerprint": "4ac4107326f74206b213c3aab130c82d70763d82a90f08986940277687d00655",
+                  "lanes": 1.0,
+                  "maxspeed_kph": 80.467
+                },
+                "direction_label": "Southeastbound",
+                "geometry": {
+                  "type": "LineString",
+                  "coordinates": [
+                    [
+                      -122.6653626,
+                      45.5286395
+                    ],
+                    [
+                      -122.6654017,
+                      45.5284536
+                    ],
+                    [
+                      -122.6654412,
+                      45.5282233
+                    ],
+                    [
+                      -122.6654843,
+                      45.5280958
+                    ],
+                    [
+                      -122.6655173,
+                      45.5280041
+                    ],
+                    [
+                      -122.6655539,
+                      45.5279069
+                    ],
+                    [
+                      -122.6655937,
+                      45.5278158
+                    ],
+                    [
+                      -122.6656431,
+                      45.527718
+                    ],
+                    [
+                      -122.6656965,
+                      45.527619
+                    ],
+                    [
+                      -122.6659042,
+                      45.527251
+                    ],
+                    [
+                      -122.665949,
+                      45.5271572
+                    ],
+                    [
+                      -122.6659942,
+                      45.527057
+                    ],
+                    [
+                      -122.6660297,
+                      45.5269621
+                    ],
+                    [
+                      -122.6660603,
+                      45.5268676
+                    ],
+                    [
+                      -122.6660889,
+                      45.5267702
+                    ],
+                    [
+                      -122.6661098,
+                      45.5266753
+                    ],
+                    [
+                      -122.6661146,
+                      45.5266355
+                    ],
+                    [
+                      -122.6661225,
+                      45.5265833
+                    ],
+                    [
+                      -122.666129,
+                      45.5264936
+                    ],
+                    [
+                      -122.6661263,
+                      45.5264012
+                    ],
+                    [
+                      -122.666118,
+                      45.5263077
+                    ],
+                    [
+                      -122.6661031,
+                      45.5262189
+                    ],
+                    [
+                      -122.66608,
+                      45.5261372
+                    ],
+                    [
+                      -122.6660533,
+                      45.526053
+                    ],
+                    [
+                      -122.6660161,
+                      45.5259634
+                    ],
+                    [
+                      -122.6659651,
+                      45.525863
+                    ],
+                    [
+                      -122.6659131,
+                      45.5257717
+                    ],
+                    [
+                      -122.6658512,
+                      45.5256816
+                    ],
+                    [
+                      -122.6657834,
+                      45.5255924
+                    ],
+                    [
+                      -122.6657165,
+                      45.5255162
+                    ],
+                    [
+                      -122.6656369,
+                      45.5254335
+                    ],
+                    [
+                      -122.665542,
+                      45.5253468
+                    ],
+                    [
+                      -122.6654378,
+                      45.5252634
+                    ],
+                    [
+                      -122.6653273,
+                      45.5251857
+                    ],
+                    [
+                      -122.6652192,
+                      45.5251157
+                    ],
+                    [
+                      -122.6651014,
+                      45.5250521
+                    ],
+                    [
+                      -122.6649762,
+                      45.5249913
+                    ],
+                    [
+                      -122.6648455,
+                      45.5249356
+                    ],
+                    [
+                      -122.6647165,
+                      45.524887
+                    ],
+                    [
+                      -122.6645734,
+                      45.5248403
+                    ],
+                    [
+                      -122.6644396,
+                      45.5248038
+                    ],
+                    [
+                      -122.6643063,
+                      45.5247734
+                    ],
+                    [
+                      -122.6641636,
+                      45.5247476
+                    ],
+                    [
+                      -122.6640307,
+                      45.52473
+                    ],
+                    [
+                      -122.6638845,
+                      45.524715
+                    ],
+                    [
+                      -122.6637297,
+                      45.5247046
+                    ],
+                    [
+                      -122.6635814,
+                      45.524701
+                    ],
+                    [
+                      -122.6634261,
+                      45.5247022
+                    ],
+                    [
+                      -122.6632785,
+                      45.5247123
+                    ],
+                    [
+                      -122.6631257,
+                      45.5247275
+                    ],
+                    [
+                      -122.6629817,
+                      45.5247485
+                    ],
+                    [
+                      -122.6628231,
+                      45.5247767
+                    ],
+                    [
+                      -122.6626886,
+                      45.5248133
+                    ],
+                    [
+                      -122.6625386,
+                      45.5248532
+                    ],
+                    [
+                      -122.6623901,
+                      45.5248986
+                    ],
+                    [
+                      -122.6622381,
+                      45.5249495
+                    ],
+                    [
+                      -122.6615702,
+                      45.5251795
+                    ],
+                    [
+                      -122.661215,
+                      45.5253022
+                    ],
+                    [
+                      -122.661005,
+                      45.5253814
+                    ],
+                    [
+                      -122.6607968,
+                      45.5254672
+                    ],
+                    [
+                      -122.6604289,
+                      45.5255979
+                    ],
+                    [
+                      -122.6602606,
+                      45.5257012
+                    ]
+                  ]
+                }
+              }
+            ]
+          },
+          "selected_edge_ids": [
+            "f47d9782ac8319b615c3859a"
+          ],
+          "restriction": {
+            "type": "full"
+          },
+          "label": "I-5 southbound ramp to I-84 eastbound"
+        },
+        {
+          "selection": {
+            "graph_version": "2026-07-31-portland-vancouver-v1",
+            "road_name": "I-5 southbound mainline: I-84 split to Steel Bridge",
+            "distance_m": 1.3,
+            "selected_edge_id": "7bcfb485d0e76397eceed4c9",
+            "directions": [
+              {
+                "edge": {
+                  "edge_id": "7bcfb485d0e76397eceed4c9",
+                  "u": "3427976322",
+                  "v": "256180952",
+                  "key": 0,
+                  "road_name": "Unnamed road",
+                  "road_class": "motorway",
+                  "osm_way_ids": [
+                    "335691046",
+                    "392572957"
+                  ],
+                  "geometry_fingerprint": "b40661349a48a05828ded42b5b3d301170622f69b7df745471401cb4d1145fb2",
+                  "lanes": 2.0,
+                  "maxspeed_kph": 80.467
+                },
+                "direction_label": "Southbound",
+                "geometry": {
+                  "type": "LineString",
+                  "coordinates": [
+                    [
+                      -122.6653626,
+                      45.5286395
+                    ],
+                    [
+                      -122.6653342,
+                      45.5283677
+                    ],
+                    [
+                      -122.6653305,
+                      45.5282075
+                    ],
+                    [
+                      -122.6653329,
+                      45.5278953
+                    ],
+                    [
+                      -122.6653493,
+                      45.5275311
+                    ],
+                    [
+                      -122.6654709,
+                      45.5250354
+                    ]
+                  ]
+                }
+              }
+            ]
+          },
+          "selected_edge_ids": [
+            "7bcfb485d0e76397eceed4c9"
+          ],
+          "restriction": {
+            "type": "full"
+          },
+          "label": "I-5 southbound mainline: I-84 split to Steel Bridge"
+        },
+        {
+          "selection": {
+            "graph_version": "2026-07-31-portland-vancouver-v1",
+            "road_name": "I-5 southbound mainline: Steel Bridge to I-84 westbound merge",
+            "distance_m": 0.1,
+            "selected_edge_id": "e35d9119a7759e899f81e129",
+            "directions": [
+              {
+                "edge": {
+                  "edge_id": "e35d9119a7759e899f81e129",
+                  "u": "256180952",
+                  "v": "40405173",
+                  "key": 0,
+                  "road_name": "Unnamed road",
+                  "road_class": "motorway",
+                  "osm_way_ids": [
+                    "160254281",
+                    "30474370",
+                    "392574369"
+                  ],
+                  "geometry_fingerprint": "4c435764bc729cc133f1d4e820673890746332080710e85784c7f6bdc8285769",
+                  "lanes": 2.0,
+                  "maxspeed_kph": 80.467
+                },
+                "direction_label": "Southbound",
+                "geometry": {
+                  "type": "LineString",
+                  "coordinates": [
+                    [
+                      -122.6654709,
+                      45.5250354
+                    ],
+                    [
+                      -122.6654671,
+                      45.5246136
+                    ],
+                    [
+                      -122.665485,
+                      45.5239137
+                    ],
+                    [
+                      -122.6655204,
+                      45.5227251
+                    ],
+                    [
+                      -122.6655553,
+                      45.5222809
+                    ],
+                    [
+                      -122.6656047,
+                      45.5218663
+                    ],
+                    [
+                      -122.6656769,
+                      45.521534
+                    ],
+                    [
+                      -122.665747,
+                      45.5213866
+                    ]
+                  ]
+                }
+              }
+            ]
+          },
+          "selected_edge_ids": [
+            "e35d9119a7759e899f81e129"
+          ],
+          "restriction": {
+            "type": "full"
+          },
+          "label": "I-5 southbound mainline: Steel Bridge to I-84 westbound merge"
+        },
+        {
+          "selection": {
+            "graph_version": "2026-07-31-portland-vancouver-v1",
+            "road_name": "I-405 northbound/Fremont Bridge ramp to I-5 southbound",
+            "distance_m": 0.6,
+            "selected_edge_id": "f75519ed8a453d02c289b56b",
+            "directions": [
+              {
+                "edge": {
+                  "edge_id": "f75519ed8a453d02c289b56b",
+                  "u": "256989277",
+                  "v": "40382443",
+                  "key": 0,
+                  "road_name": "Unnamed road",
+                  "road_class": "motorway_link",
+                  "osm_way_ids": [
+                    "1457953971",
+                    "23526628"
+                  ],
+                  "geometry_fingerprint": "d0155f7cc6123c42e71152e9eff619a5f4e3d97858f76fed6cb4ed8b3d8a09c2",
+                  "lanes": 1.0,
+                  "maxspeed_kph": 80.467
+                },
+                "direction_label": "Eastbound",
+                "geometry": {
+                  "type": "LineString",
+                  "coordinates": [
+                    [
+                      -122.6797012,
+                      45.5406141
+                    ],
+                    [
+                      -122.6794872,
+                      45.5408612
+                    ],
+                    [
+                      -122.6790053,
+                      45.541335
+                    ],
+                    [
+                      -122.6788199,
+                      45.5415512
+                    ],
+                    [
+                      -122.6787355,
+                      45.5416539
+                    ],
+                    [
+                      -122.6780237,
+                      45.5425202
+                    ],
+                    [
+                      -122.6779056,
+                      45.5426322
+                    ],
+                    [
+                      -122.6778048,
+                      45.5427146
+                    ],
+                    [
+                      -122.6776955,
+                      45.5427937
+                    ],
+                    [
+                      -122.6775618,
+                      45.5428761
+                    ],
+                    [
+                      -122.6774061,
+                      45.5429529
+                    ],
+                    [
+                      -122.6772448,
+                      45.5430227
+                    ],
+                    [
+                      -122.6771364,
+                      45.5430627
+                    ],
+                    [
+                      -122.676953,
+                      45.5431176
+                    ],
+                    [
+                      -122.6767388,
+                      45.5431759
+                    ],
+                    [
+                      -122.6765229,
+                      45.5432218
+                    ],
+                    [
+                      -122.6763023,
+                      45.5432433
+                    ],
+                    [
+                      -122.676175,
+                      45.5432509
+                    ],
+                    [
+                      -122.6759916,
+                      45.5432563
+                    ],
+                    [
+                      -122.6757209,
+                      45.543246
+                    ],
+                    [
+                      -122.6755956,
+                      45.5432357
+                    ],
+                    [
+                      -122.6754993,
+                      45.5432237
+                    ],
+                    [
+                      -122.6753847,
+                      45.5432061
+                    ],
+                    [
+                      -122.6751947,
+                      45.5431665
+                    ],
+                    [
+                      -122.6750508,
+                      45.5431244
+                    ],
+                    [
+                      -122.6748822,
+                      45.5430699
+                    ],
+                    [
+                      -122.674747,
+                      45.5430217
+                    ],
+                    [
+                      -122.6744954,
+                      45.5429027
+                    ],
+                    [
+                      -122.674367,
+                      45.5428354
+                    ],
+                    [
+                      -122.6741681,
+                      45.5427139
+                    ],
+                    [
+                      -122.6738461,
+                      45.5424808
+                    ],
+                    [
+                      -122.6731974,
+                      45.5419709
+                    ],
+                    [
+                      -122.6729714,
+                      45.5418631
+                    ]
+                  ]
+                }
+              }
+            ]
+          },
+          "selected_edge_ids": [
+            "f75519ed8a453d02c289b56b"
+          ],
+          "restriction": {
+            "type": "full"
+          },
+          "label": "I-405 northbound/Fremont Bridge ramp to I-5 southbound"
+        }
+      ]
+    }
+  ]
+}

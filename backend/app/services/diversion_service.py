@@ -22,6 +22,7 @@ from shapely.geometry import Point
 from backend.app.db.database import DatabaseManager
 from backend.app.schemas.diversion import (
     DiversionEdgeChange,
+    DiversionPlaybackEdge,
     DiversionJobResponse,
     DiversionRequest,
     DiversionResult,
@@ -46,7 +47,7 @@ from backend.app.services.traffic_service import (
 
 logger = logging.getLogger(__name__)
 PACIFIC = ZoneInfo("America/Los_Angeles")
-MODEL_VERSION = "background-flow-msa-bpr-v2"
+MODEL_VERSION = "background-flow-msa-bpr-v3"
 BPR_ALPHA = 0.15
 BPR_BETA = 4.0
 
@@ -366,6 +367,11 @@ class DiversionService:
             residential_increase_vph=max(0.0, residential_increase),
             recommended_route=recommended_route,
             edge_changes=edge_changes,
+            playback_edges=self._playback_edges(
+                baseline.flows,
+                scenario.flows,
+                restrictions,
+            ),
             assumptions=[
                 (
                     "Matched historical volume and speed seed the modeled network; uncovered roads remain class-based estimates."
@@ -377,6 +383,7 @@ class DiversionService:
                 "Congestion costs use the uncalibrated BPR formula with alpha 0.15 and beta 4.0.",
                 "Incremental all-or-nothing assignments are averaged with the method of successive averages.",
                 "Observed flow on a fully closed directed edge is reassigned between that edge's endpoints as a bounded first-order detour.",
+                "Playback dots are bounded visual samples tweened between computed baseline and scenario road-flow targets; they are not one dot per observed vehicle.",
                 "Regional origin-destination demand, signal timing, and queue spillback are not yet modeled.",
             ],
         )
@@ -687,6 +694,57 @@ class DiversionService:
             max([0.0, *changes]),
             min([0.0, *changes]),
         )
+
+    def _playback_edges(
+        self,
+        baseline: dict[str, float],
+        scenario: dict[str, float],
+        restrictions: dict[str, AppliedRestriction],
+        limit: int = 450,
+    ) -> list[DiversionPlaybackEdge]:
+        """Return high-flow road geometries for bounded client-side tweening."""
+
+        edges = self.graph_service.edges
+        graph = self.graph_service.graph
+        if edges is None or graph is None:
+            raise GraphUnavailableError("Graph edge details are unavailable.")
+        ranked_ids = sorted(
+            set(baseline) | set(scenario),
+            key=lambda edge_id: max(
+                baseline.get(edge_id, 0.0),
+                scenario.get(edge_id, 0.0),
+            ),
+            reverse=True,
+        )
+        records: list[DiversionPlaybackEdge] = []
+        for edge_id in ranked_ids:
+            if len(records) >= limit:
+                break
+            position = self.graph_service.edge_id_positions.get(edge_id)
+            if position is None:
+                continue
+            u, v, key = edges.index[position]
+            edge = graph.edges[u, v, key]
+            geometry = edge.get("geometry")
+            if geometry is None or len(geometry.coords) < 2:
+                continue
+            scenario_vph = max(0.0, scenario.get(edge_id, 0.0))
+            capacity = _effective_capacity(edge, restrictions.get(edge_id))
+            records.append(
+                DiversionPlaybackEdge(
+                    edge_id=edge_id,
+                    baseline_vph=round(max(0.0, baseline.get(edge_id, 0.0)), 1),
+                    scenario_vph=round(scenario_vph, 1),
+                    volume_capacity_ratio=round(scenario_vph / capacity, 3),
+                    geometry=GeoJSONLineString(
+                        coordinates=[
+                            (float(longitude), float(latitude))
+                            for longitude, latitude in geometry.coords
+                        ]
+                    ),
+                )
+            )
+        return records
 
     def _assignment_progress(
         self,

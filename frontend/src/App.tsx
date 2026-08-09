@@ -1,6 +1,6 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Route, ShieldAlert, ShieldCheck } from 'lucide-react'
+import { Check, ChevronDown, Route, ShieldAlert, ShieldCheck } from 'lucide-react'
 import {
   compareRoute,
   createGoogleMapsUrl,
@@ -15,6 +15,10 @@ import {
   type SelectedLocation,
 } from './api/routing'
 import { getStatus } from './api/system'
+import {
+  listClosurePresets,
+  type ClosurePreset,
+} from './api/closurePresets'
 import {
   archiveScenario,
   createScenario,
@@ -40,6 +44,11 @@ import {
   type DiversionSettings,
 } from './api/diversion'
 import { DiversionPanel } from './features/diversion/DiversionPanel'
+import { SimulationPlayback } from './features/simulation/PlaybackControls'
+import {
+  buildSimulationSeeds,
+  simulationMapFrame,
+} from './features/simulation/simulationPlayback'
 import { DraftRecovery, ScenarioPanel } from './features/scenarios/ScenarioPanel'
 import {
   clearPlannerDraft,
@@ -76,6 +85,7 @@ type ScenarioAction =
 function App() {
   const queryClient = useQueryClient()
   const [closurePicking, setClosurePicking] = useState(false)
+  const [openModule, setOpenModule] = useState(1)
   const [closureSections, setClosureSections] = useState<ClosureSectionDraft[]>([])
   const [selectedClosureEdgeIds, setSelectedClosureEdgeIds] = useState<string[]>([])
   const [lastComparisonKey, setLastComparisonKey] = useState('')
@@ -92,6 +102,9 @@ function App() {
   const [diversionSettings, setDiversionSettings] = useState<DiversionSettings>(
     DEFAULT_DIVERSION_SETTINGS,
   )
+  const [simulationElapsedSeconds, setSimulationElapsedSeconds] = useState(0)
+  const [simulationPlaying, setSimulationPlaying] = useState(false)
+  const [simulationSpeed, setSimulationSpeed] = useState(10)
   const [scenarioName, setScenarioName] = useState('')
   const [currentScenario, setCurrentScenario] = useState<ScenarioRecord | null>(null)
   const [pendingDraft, setPendingDraft] = useState<BrowserDraft | null>(null)
@@ -119,11 +132,18 @@ function App() {
     refetchOnWindowFocus: true,
   })
 
+  const closurePresetsQuery = useQuery({
+    queryKey: ['closure-presets'],
+    queryFn: ({ signal }) => listClosurePresets(signal),
+    refetchOnWindowFocus: false,
+  })
+
   const routeMutation = useMutation({
     mutationFn: ({ origin: routeOrigin, destination: routeDestination, closure }: RouteVariables) =>
       compareRoute(routeOrigin, routeDestination, closure),
     onSuccess: (_response, variables) => {
       setLastComparisonKey(closureComparisonKey(variables.closure))
+      setOpenModule(variables.closure ? 3 : 2)
     },
   })
 
@@ -601,6 +621,35 @@ function App() {
     closureSelectionMutation.reset()
   }
 
+  function applyClosurePreset(preset: ClosurePreset) {
+    if (preset.graph_status !== 'current') return
+    if (
+      closureSections.length > 0 &&
+      !window.confirm('Replace the road sections currently marked in this trip?')
+    ) {
+      return
+    }
+    setClosurePicking(false)
+    setClosureSections(
+      preset.sections.map((section) => ({
+        selection: section.selection,
+        restriction: section.restriction,
+        schedule: { type: 'always' },
+      })),
+    )
+    setSelectedClosureEdgeIds([
+      ...new Set(preset.sections.flatMap((section) => section.selected_edge_ids)),
+    ])
+    if (!scenarioName.trim()) setScenarioName(preset.name)
+    setSelectedAlternativeRouteId(null)
+    setDiversionSnapshot(null)
+    setSimulationElapsedSeconds(0)
+    setSimulationPlaying(false)
+    setOpenModule(2)
+    alternativesMutation.reset()
+    closureSelectionMutation.reset()
+  }
+
   function removeClosureSection(sectionIndex: number) {
     const removed = closureSections[sectionIndex]
     if (!removed) return
@@ -712,6 +761,25 @@ function App() {
     diversionSnapshot?.comparisonKey === currentClosureKey
       ? diversionSnapshot.result
       : null
+  const simulationSeeds = useMemo(
+    () => currentDiversionResult ? buildSimulationSeeds(currentDiversionResult) : [],
+    [currentDiversionResult],
+  )
+  const simulationFrame = useMemo(
+    () => currentDiversionResult
+      ? simulationMapFrame(
+          simulationSeeds,
+          currentDiversionResult,
+          currentDiversionResult.recommended_route,
+          simulationElapsedSeconds,
+        )
+      : null,
+    [
+      currentDiversionResult,
+      simulationElapsedSeconds,
+      simulationSeeds,
+    ],
+  )
   const selectedNavigationRoute =
     currentDiversionResult?.recommended_route ??
     selectedAlternative?.route ??
@@ -743,6 +811,27 @@ function App() {
     refetchOnWindowFocus: false,
   })
 
+  useEffect(() => {
+    if (!simulationPlaying || !currentDiversionResult) return
+    let frameId = 0
+    let previous = performance.now()
+    const tick = (now: number) => {
+      const deltaSeconds = Math.min((now - previous) / 1000, 0.25)
+      previous = now
+      setSimulationElapsedSeconds((current) => {
+        const next = current + deltaSeconds * simulationSpeed
+        if (next >= 3600) {
+          setSimulationPlaying(false)
+          return 3600
+        }
+        return next
+      })
+      frameId = requestAnimationFrame(tick)
+    }
+    frameId = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frameId)
+  }, [currentDiversionResult, simulationPlaying, simulationSpeed])
+
   const readinessNotice = system.error
     ? {
         title: 'The local API is not responding.',
@@ -756,6 +845,10 @@ function App() {
           detail: `${system.data?.graph.message ?? 'Routing is unavailable.'} Run npm run graph:build, then restart Commute Help.`,
         }
       : null
+
+  const simulatedHeaderTime = new Date(
+    new Date(departureTime).getTime() + simulationElapsedSeconds * 1000,
+  )
 
   return (
     <div className="app-shell">
@@ -771,24 +864,42 @@ function App() {
           </span>
         </a>
 
-        <nav className="workflow-nav" aria-label="Planning steps">
-          {WORKFLOW_STEPS.map((step, index) => (
-            <span
-              className={
-                index === activeStep
-                  ? 'workflow-step workflow-step--active'
-                  : index < activeStep
-                    ? 'workflow-step workflow-step--complete'
-                    : 'workflow-step'
-              }
-              key={step}
-              aria-current={index === activeStep ? 'step' : undefined}
-            >
-              <span>{index + 1}</span>
-              {step}
+        {currentDiversionResult ? (
+          <div className="simulation-header-summary" aria-live="polite">
+            <i aria-hidden="true" />
+            <span>
+              <strong>Simulating closure impact</strong>
+              <small>{scenarioName.trim() || 'Current closure scenario'}</small>
             </span>
-          ))}
-        </nav>
+            <time dateTime={simulatedHeaderTime.toISOString()}>
+              {simulatedHeaderTime.toLocaleDateString([], {
+                weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+              })}
+              <strong>{simulatedHeaderTime.toLocaleTimeString([], {
+                hour: 'numeric', minute: '2-digit',
+              })}</strong>
+            </time>
+          </div>
+        ) : (
+          <nav className="workflow-nav" aria-label="Planning steps">
+            {WORKFLOW_STEPS.map((step, index) => (
+              <span
+                className={
+                  index === activeStep
+                    ? 'workflow-step workflow-step--active'
+                    : index < activeStep
+                      ? 'workflow-step workflow-step--complete'
+                      : 'workflow-step'
+                }
+                key={step}
+                aria-current={index === activeStep ? 'step' : undefined}
+              >
+                <span>{index + 1}</span>
+                {step}
+              </span>
+            ))}
+          </nav>
+        )}
 
         <span
           className={`graph-badge ${graphReady ? 'graph-badge--ready' : ''}`}
@@ -825,48 +936,182 @@ function App() {
 
       <main className="planner-layout" id="planner-main" tabIndex={-1}>
         <aside className="planner-sidebar">
-          <TripPanel
-            origin={origin}
-            destination={destination}
-            selectionMode={selectionMode}
-            selectionPending={selectionMutation.isPending}
-            routePending={routeMutation.isPending}
-            error={workflowError}
-            onSelectMode={chooseSelectionMode}
-            onClear={clearSelection}
-            onCoordinateSubmit={pickCoordinate}
-            onCalculate={calculateRoute}
-          />
-          {routeMutation.data ? (
-            <ClosurePanel
-              sections={closureSections}
-              selectedEdgeIds={selectedClosureEdgeIds}
-              picking={closurePicking}
-              selecting={closureSelectionMutation.isPending}
-              comparing={routeMutation.isPending}
-              error={closureError}
-              departureTime={departureTime}
-              onDepartureTimeChange={setDepartureTime}
-              onStartPicking={startClosurePicking}
-              onStopPicking={stopClosurePicking}
-              onToggleDirection={toggleClosureDirection}
-              onSelectAllDirections={selectAllSectionDirections}
-              onRestrictionChange={updateSectionRestriction}
-              onScheduleChange={updateSectionSchedule}
-              onRemoveSection={removeClosureSection}
-              onClearAll={clearClosure}
-              onCompare={compareClosureRoute}
-              scenarioName={scenarioName}
-              currentScenarioRevision={currentScenario?.revision ?? null}
-              scenarioDirty={scenarioDirty}
-              canSave={currentScenarioContent !== undefined}
-              saving={scenarioActionMutation.isPending}
-              saveError={formatScenarioError(scenarioActionMutation.error)}
-              onScenarioNameChange={setScenarioName}
-              onSaveScenario={saveCurrentScenario}
+          <WorkflowModule
+            step={1}
+            title="Trip"
+            complete={Boolean(routeMutation.data)}
+            open={openModule === 1}
+            onToggle={() => setOpenModule(openModule === 1 ? 0 : 1)}
+          >
+            <TripPanel
+              origin={origin}
+              destination={destination}
+              selectionMode={selectionMode}
+              selectionPending={selectionMutation.isPending}
+              routePending={routeMutation.isPending}
+              error={workflowError}
+              onSelectMode={chooseSelectionMode}
+              onClear={clearSelection}
+              onCoordinateSubmit={pickCoordinate}
+              onCalculate={calculateRoute}
             />
-          ) : null}
-          <ScenarioPanel
+          </WorkflowModule>
+          <WorkflowModule
+            step={2}
+            title="Closures"
+            complete={comparisonIsCurrent && closureSections.length > 0}
+            open={openModule === 2}
+            disabled={!routeMutation.data}
+            onToggle={() => setOpenModule(openModule === 2 ? 0 : 2)}
+          >
+            {routeMutation.data ? (
+              <ClosurePanel
+                presets={closurePresetsQuery.data ?? []}
+                presetsLoading={closurePresetsQuery.isPending}
+                presetsError={
+                  closurePresetsQuery.error instanceof Error
+                    ? closurePresetsQuery.error.message
+                    : null
+                }
+                onApplyPreset={applyClosurePreset}
+                sections={closureSections}
+                selectedEdgeIds={selectedClosureEdgeIds}
+                picking={closurePicking}
+                selecting={closureSelectionMutation.isPending}
+                comparing={routeMutation.isPending}
+                error={closureError}
+                departureTime={departureTime}
+                onDepartureTimeChange={setDepartureTime}
+                onStartPicking={startClosurePicking}
+                onStopPicking={stopClosurePicking}
+                onToggleDirection={toggleClosureDirection}
+                onSelectAllDirections={selectAllSectionDirections}
+                onRestrictionChange={updateSectionRestriction}
+                onScheduleChange={updateSectionSchedule}
+                onRemoveSection={removeClosureSection}
+                onClearAll={clearClosure}
+                onCompare={compareClosureRoute}
+                scenarioName={scenarioName}
+                currentScenarioRevision={currentScenario?.revision ?? null}
+                scenarioDirty={scenarioDirty}
+                canSave={currentScenarioContent !== undefined}
+                saving={scenarioActionMutation.isPending}
+                saveError={formatScenarioError(scenarioActionMutation.error)}
+                onScenarioNameChange={setScenarioName}
+                onSaveScenario={saveCurrentScenario}
+              />
+            ) : null}
+          </WorkflowModule>
+          <WorkflowModule
+            step={3}
+            title="Conditions"
+            complete={alternatives.length > 0}
+            open={openModule === 3}
+            disabled={!displayedResult}
+            onToggle={() => setOpenModule(openModule === 3 ? 0 : 3)}
+          >
+            {displayedResult ? (
+              <>
+                <RouteResultCard result={displayedResult} />
+                {selectedNavigationRoute ? (
+                  <ReliabilityPanel
+                    key={selectedNavigationRoute.route_id}
+                    route={selectedNavigationRoute}
+                    departureTime={departureTime}
+                    settings={reliabilitySettings}
+                    onSettingsChange={setReliabilitySettings}
+                    onDepartureTimeChange={setDepartureTime}
+                  />
+                ) : null}
+                <RouteAlternativesPanel
+                  alternatives={alternatives}
+                  selectedRouteId={selectedAlternativeRouteId}
+                  loading={alternativesMutation.isPending}
+                  error={alternativesMutation.error?.message ?? null}
+                  handoff={googleHandoff.data}
+                  handoffLoading={googleHandoff.isPending && googleHandoff.fetchStatus === 'fetching'}
+                  handoffError={googleHandoff.error?.message ?? null}
+                  onFind={findAlternatives}
+                  onSelect={setSelectedAlternativeRouteId}
+                />
+              </>
+            ) : null}
+          </WorkflowModule>
+          <WorkflowModule
+            step={4}
+            title="Simulation"
+            complete={Boolean(currentDiversionResult)}
+            open={openModule === 4}
+            disabled={!comparisonIsCurrent || !currentClosureComparison}
+            onToggle={() => setOpenModule(openModule === 4 ? 0 : 4)}
+          >
+            {comparisonIsCurrent &&
+            currentClosureComparison &&
+            routeMutation.data?.applied_restriction_edge_ids.length &&
+            origin &&
+            destination ? (
+              <>
+                {currentDiversionResult ? (
+                  <div className="simulation-module-summary">
+                    <article>
+                      <small>Active scenario</small>
+                      <strong><ShieldAlert size={15} aria-hidden="true" />{scenarioName.trim() || 'Current closure'}</strong>
+                      <span>{closureSections.length} affected road sections</span>
+                    </article>
+                    <article>
+                      <small>Your trip</small>
+                      <strong><Route size={15} aria-hidden="true" />Simulated trip</strong>
+                      <span>{origin.label} to {destination.label}</span>
+                    </article>
+                    <article className="simulation-module-summary__route">
+                      <small>Current route</small>
+                      <strong>
+                        {currentDiversionResult.recommended_route
+                          ? `${Math.round(currentDiversionResult.recommended_route.travel_time_seconds / 60)} min · ${(currentDiversionResult.recommended_route.distance_m / 1609.344).toFixed(1)} mi`
+                          : 'No route available'}
+                      </strong>
+                      <span>{currentDiversionResult.recommended_route ? 'Traffic-aware modeled path' : 'Review the closure and model settings'}</span>
+                    </article>
+                  </div>
+                ) : null}
+                <details
+                  className="simulation-settings-disclosure"
+                  key={currentDiversionResult?.input_hash ?? 'simulation-setup'}
+                  open={!currentDiversionResult}
+                >
+                  <summary>{currentDiversionResult ? 'Model settings and rerun' : 'Set up the simulation'}</summary>
+                  <DiversionPanel
+                    key={currentClosureKey}
+                    origin={origin}
+                    destination={destination}
+                    closure={currentClosureComparison}
+                    settings={diversionSettings}
+                    onSettingsChange={setDiversionSettings}
+                    onResult={(result) => {
+                      if (result) {
+                        setDiversionSnapshot({ comparisonKey: currentClosureKey, result })
+                        setSimulationElapsedSeconds(0)
+                        setSimulationPlaying(false)
+                        setOpenModule(4)
+                      } else {
+                        setDiversionSnapshot(null)
+                        setSimulationElapsedSeconds(0)
+                        setSimulationPlaying(false)
+                      }
+                    }}
+                  />
+                </details>
+              </>
+            ) : null}
+          </WorkflowModule>
+          <WorkflowModule
+            step={5}
+            title="Save"
+            complete={Boolean(currentScenario)}
+            open={openModule === 5}
+            onToggle={() => setOpenModule(openModule === 5 ? 0 : 5)}
+          >
+            <ScenarioPanel
               scenarios={scenariosQuery.data ?? []}
               current={currentScenario}
               name={scenarioName}
@@ -895,6 +1140,7 @@ function App() {
                 scenarioActionMutation.mutate({ type: 'import', value })
               }
             />
+          </WorkflowModule>
         </aside>
 
         <div className="map-column">
@@ -903,15 +1149,20 @@ function App() {
               origin={origin}
               destination={destination}
               route={displayedResult?.baseline ?? null}
-              scenarioRoute={currentDiversionResult?.recommended_route ?? selectedAlternative?.route ?? displayedResult?.scenario ?? null}
+              scenarioRoute={currentDiversionResult ? null : selectedAlternative?.route ?? displayedResult?.scenario ?? null}
               closureDirections={
                 closureSections.flatMap((section) =>
                   section.selection.directions.filter((direction) =>
                     selectedClosureEdgeIds.includes(direction.edge.edge_id),
-                  ),
+                  ).map((direction) => ({
+                    ...direction,
+                    restrictionType: section.restriction.type,
+                  })),
                 )
               }
               spilloverEdges={currentDiversionResult?.edge_changes ?? []}
+              simulationFrame={simulationFrame}
+              simulationPlaying={simulationPlaying}
               selectionMode={selectionMode}
               selectionPending={selectionMutation.isPending}
               closurePicking={closurePicking}
@@ -922,61 +1173,24 @@ function App() {
               onMapStateChange={setMapState}
             />
           </Suspense>
-          {displayedResult ? (
-            <>
-              <RouteResultCard result={displayedResult} />
-              {selectedNavigationRoute ? (
-                <ReliabilityPanel
-                  key={selectedNavigationRoute.route_id}
-                  route={selectedNavigationRoute}
-                  departureTime={departureTime}
-                  settings={reliabilitySettings}
-                  onSettingsChange={setReliabilitySettings}
-                  onDepartureTimeChange={setDepartureTime}
-                />
-              ) : null}
-              <RouteAlternativesPanel
-                alternatives={alternatives}
-                selectedRouteId={selectedAlternativeRouteId}
-                loading={alternativesMutation.isPending}
-                error={alternativesMutation.error?.message ?? null}
-                handoff={googleHandoff.data}
-                handoffLoading={googleHandoff.isPending && googleHandoff.fetchStatus === 'fetching'}
-                handoffError={googleHandoff.error?.message ?? null}
-                onFind={findAlternatives}
-                onSelect={setSelectedAlternativeRouteId}
-              />
-              {comparisonIsCurrent &&
-              currentClosureComparison &&
-              routeMutation.data.applied_restriction_edge_ids.length > 0 &&
-              origin &&
-              destination ? (
-                <DiversionPanel
-                  key={currentClosureKey}
-                  origin={origin}
-                  destination={destination}
-                  closure={currentClosureComparison}
-                  settings={diversionSettings}
-                  onSettingsChange={setDiversionSettings}
-                  onResult={(result) => {
-                    if (result) {
-                      setDiversionSnapshot({
-                        comparisonKey: currentClosureKey,
-                        result,
-                      })
-                    } else {
-                      setDiversionSnapshot(null)
-                    }
-                  }}
-                />
-              ) : null}
-            </>
-          ) : (
+          {currentDiversionResult ? (
+            <SimulationPlayback
+              result={currentDiversionResult}
+              elapsedSeconds={simulationElapsedSeconds}
+              playing={simulationPlaying}
+              speed={simulationSpeed}
+              departureTime={departureTime}
+              onElapsedChange={setSimulationElapsedSeconds}
+              onPlayingChange={setSimulationPlaying}
+              onSpeedChange={setSimulationSpeed}
+            />
+          ) : null}
+          {!displayedResult ? (
             <div className="route-placeholder">
               <Route size={20} aria-hidden="true" />
               Your normal route and honest free-flow estimate will appear here.
             </div>
-          )}
+          ) : null}
         </div>
       </main>
     </div>
@@ -984,6 +1198,37 @@ function App() {
 }
 
 export default App
+
+function WorkflowModule({
+  step,
+  title,
+  complete,
+  open,
+  disabled = false,
+  onToggle,
+  children,
+}: {
+  step: number
+  title: string
+  complete: boolean
+  open: boolean
+  disabled?: boolean
+  onToggle: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <section className={`workflow-module ${open ? 'workflow-module--open' : ''}`}>
+      <button type="button" className="workflow-module__toggle" disabled={disabled} onClick={onToggle}>
+        <span className={`workflow-module__status ${complete ? 'workflow-module__status--complete' : ''}`}>
+          {complete ? <Check size={16} strokeWidth={3} /> : step}
+        </span>
+        <span><small>Step {step}</small><strong>{title}</strong></span>
+        <ChevronDown size={18} className="workflow-module__chevron" />
+      </button>
+      {open ? <div className="workflow-module__body">{children}</div> : null}
+    </section>
+  )
+}
 
 function scenarioWorkflow(content: ScenarioContent): {
   sections: ClosureSectionDraft[]

@@ -1,0 +1,22 @@
+{
+  "type": "FeatureCollection",
+  "name": "synthetic_regional_od_zones",
+  "crs": {"type": "name", "properties": {"name": "urn:ogc:def:crs:OGC:1.3:CRS84"}},
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {"zone_id": "Z1", "zone_type": "internal"},
+      "geometry": {"type": "Polygon", "coordinates": [[[-122.70, 45.50], [-122.69, 45.50], [-122.69, 45.51], [-122.70, 45.51], [-122.70, 45.50]]]}
+    },
+    {
+      "type": "Feature",
+      "properties": {"zone_id": "Z2", "zone_type": "internal"},
+      "geometry": {"type": "Polygon", "coordinates": [[[-122.68, 45.50], [-122.67, 45.50], [-122.67, 45.51], [-122.68, 45.51], [-122.68, 45.50]]]}
+    },
+    {
+      "type": "Feature",
+      "properties": {"zone_id": "X1", "zone_type": "external"},
+      "geometry": {"type": "Polygon", "coordinates": [[[-122.66, 45.50], [-122.65, 45.50], [-122.65, 45.51], [-122.66, 45.51], [-122.66, 45.50]]]}
+    }
+  ]
+}

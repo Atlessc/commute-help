@@ -50,6 +50,16 @@ class DiversionEdgeChange(BaseModel):
     geometry: GeoJSONLineString
 
 
+class DiversionPlaybackEdge(BaseModel):
+    """Bounded road state used to render traffic samples during playback."""
+
+    edge_id: str
+    baseline_vph: float = Field(ge=0)
+    scenario_vph: float = Field(ge=0)
+    volume_capacity_ratio: float = Field(ge=0)
+    geometry: GeoJSONLineString
+
+
 class DiversionResult(BaseModel):
     evidence_level: Literal["modeled_uncalibrated"] = "modeled_uncalibrated"
     graph_version: str
@@ -74,6 +84,7 @@ class DiversionResult(BaseModel):
     residential_increase_vph: float = Field(ge=0)
     recommended_route: RouteSummary | None = None
     edge_changes: list[DiversionEdgeChange]
+    playback_edges: list[DiversionPlaybackEdge] = Field(default_factory=list)
     assumptions: list[str]
 
 

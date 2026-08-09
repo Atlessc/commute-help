@@ -26,6 +26,107 @@
   box-shadow: 0 8px 24px rgba(32, 42, 36, 0.2);
 }
 
+.sim-trip-callout {
+  position: absolute;
+  z-index: 3;
+  top: 18px;
+  left: max(380px, 42%);
+  display: grid;
+  gap: 2px;
+  max-width: 260px;
+  padding: 10px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.86);
+  border-radius: 11px;
+  color: var(--ink);
+  background: rgba(248, 247, 240, 0.94);
+  box-shadow: 0 8px 24px rgba(32, 42, 36, 0.18);
+  backdrop-filter: blur(10px);
+}
+
+.sim-trip-callout strong {
+  color: #087f88;
+  font-size: 0.72rem;
+}
+
+.sim-trip-callout span {
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+
+.simulation-map-legend {
+  position: absolute;
+  z-index: 3;
+  right: 18px;
+  bottom: 166px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 10px;
+  color: #26342b;
+  font-size: 0.62rem;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 5px 18px rgba(32, 42, 36, 0.14);
+}
+
+.agent-key {
+  display: block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.agent-key--free { background: #39a852; }
+.agent-key--slow { background: #e9a126; }
+.agent-key--heavy { background: #d52f2f; }
+
+.map-closure-legend {
+  position: absolute;
+  z-index: 2;
+  right: 12px;
+  bottom: 36px;
+  display: grid;
+  gap: 7px;
+  padding: 9px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 10px;
+  color: #26342b;
+  font-size: 0.66rem;
+  font-weight: 730;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 5px 18px rgba(32, 42, 36, 0.16);
+  backdrop-filter: blur(5px);
+}
+
+.map-closure-legend span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.map-legend-line {
+  display: block;
+  width: 27px;
+  height: 0;
+  border-top: 5px solid;
+}
+
+.map-legend-line--full {
+  border-color: #c3462d;
+}
+
+.map-legend-line--lane {
+  border-color: #4d963d;
+  border-top-style: dotted;
+}
+
+.map-legend-line--speed {
+  border-color: #c48320;
+  border-top-style: dashed;
+}
+
 .map-instruction {
   top: 18px;
   background: rgba(35, 86, 63, 0.94);
@@ -44,5 +145,12 @@
 @media (max-width: 800px) {
   .map-shell {
     min-height: 430px;
+  }
+
+  .sim-trip-callout {
+    top: 70px;
+    right: 10px;
+    left: auto;
+    max-width: 220px;
   }
 }

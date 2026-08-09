@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  buildFreewayUrl,
   buildChunks,
   downloadWithRetry,
   normalizeChunk,
@@ -46,6 +47,7 @@ const freewayCsv = [
   "starttime,resolution,detector_id,speed,volume,occupancy,countreadings,delay,traveltime,vht,vmt",
   "2025-09-08T08:00:00-07:00,00:15:00,100,40,10,8,45,0,0,0,0",
   "2025-09-08T08:00:00-07:00,00:15:00,101,45,20,12,45,0,0,0,0",
+  "2025-09-09T00:00:00-07:00,00:15:00,100,50,30,10,45,0,0,0,0",
   "",
 ].join("\n");
 
@@ -54,7 +56,7 @@ test("configuration produces one sequential request per highway and date chunk",
   const chunks = buildChunks(config);
   assert.equal(chunks.length, 4);
   assert.deepEqual(chunks.map((chunk) => chunk.highway_id), [3, 4, 3, 4]);
-  assert.throws(() => validateConfig({ ...baseConfig, delay_ms: 999 }), /delay_ms/);
+  assert.throws(() => validateConfig({ ...baseConfig, delay_ms: 99 }), /delay_ms/);
   assert.throws(() => validateConfig({ ...baseConfig, chunk_days: 8 }), /chunk_days/);
   assert.doesNotThrow(() => validateConfig({
     ...baseConfig,
@@ -77,6 +79,14 @@ test("single-day campaigns do not send requests for excluded weekend dates", () 
   assert.equal(chunks.length, 4);
 });
 
+test("PORTAL request uses an exclusive next-day boundary for complete daily data", () => {
+  const config = validateConfig(baseConfig);
+  const [chunk] = buildChunks(config);
+  const url = buildFreewayUrl(chunk, config);
+  assert.equal(url.searchParams.get("start_date"), "2025-09-08");
+  assert.equal(url.searchParams.get("end_date"), "2025-09-09");
+});
+
 test("CSV parsing handles quoted values and Web Mercator converts to lon-lat", () => {
   assert.deepEqual(parseCsvLine('one,"two, too","quote ""inside"""'), ["one", "two, too", 'quote "inside"']);
   const [longitude, latitude] = webMercatorToLonLat(-13661137.0, 5700582.7);
@@ -95,8 +105,19 @@ test("normalization aggregates detector lanes without loading the whole campaign
     detectors: new Map(detectorMetadata.map((item) => [item.detectorid, item])),
     stations: new Map([[10, { stationid: 10, highwayid: 3, longitude, latitude }]]),
   };
-  const result = await normalizeChunk(rawPath, normalizedPath, metadata, validateConfig(baseConfig));
-  assert.deepEqual(result, { raw_rows: 2, normalized_rows: 1, rejected_rows: 0 });
+  const result = await normalizeChunk(
+    rawPath,
+    normalizedPath,
+    metadata,
+    validateConfig(baseConfig),
+    { start_date: "2025-09-08", end_date: "2025-09-08" },
+  );
+  assert.deepEqual(result, {
+    raw_rows: 3,
+    normalized_rows: 1,
+    rejected_rows: 0,
+    out_of_window_rows: 1,
+  });
   const rows = (await readFile(normalizedPath, "utf8")).trim().split("\n");
   const values = parseCsvLine(rows[1]);
   assert.equal(values[0], "portal-station-10");
@@ -140,12 +161,31 @@ test("a verified campaign rerun makes no additional HTTP requests", async () => 
   const second = await runCampaign(config, { outputRoot, fetchImpl, limiter });
   assert.equal(second.processed, 0);
   assert.equal(requestCount, 4);
+  const changedRuntime = { ...config, delay_ms: 300, max_retries: 2 };
+  const third = await runCampaign(changedRuntime, { outputRoot, fetchImpl, limiter });
+  assert.equal(third.processed, 0);
+  assert.equal(requestCount, 4);
+  await assert.rejects(
+    runCampaign({ ...changedRuntime, resolution: "01:00:00" }, { outputRoot, fetchImpl, limiter }),
+    /data-defining campaign config changed/,
+  );
   const manifest = JSON.parse(await readFile(path.join(outputRoot, "campaign-manifest.json"), "utf8"));
   const complete = Object.values(manifest.chunks)[0];
   assert.equal(complete.status, "complete");
   assert.equal(complete.normalized_rows, 1);
-  assert.equal(complete.raw_rows, 2);
+  assert.equal(complete.raw_rows, 3);
+  assert.equal(complete.out_of_window_rows, 1);
   assert.match(complete.raw.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(manifest.config.delay_ms, 300);
+  assert.equal(manifest.config.max_retries, 2);
+  assert.equal(manifest.access_policy.configured_delay_ms, 300);
+  assert.deepEqual(manifest.runtime_config_history, [{
+    changed_at: manifest.runtime_config_history[0].changed_at,
+    changes: {
+      delay_ms: { from: 1000, to: 300 },
+      max_retries: { from: 0, to: 2 },
+    },
+  }]);
 });
 
 function jsonResponse(value) {

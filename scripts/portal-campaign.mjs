@@ -11,7 +11,13 @@ import { finished, pipeline } from "node:stream/promises";
 import { pathToFileURL } from "node:url";
 
 export const PORTAL_BASE_URL = "https://new.portal.its.pdx.edu";
-const MANIFEST_VERSION = 1;
+const MANIFEST_VERSION = 2;
+const RUNTIME_CONFIG_KEYS = [
+  "delay_ms",
+  "request_timeout_ms",
+  "max_retries",
+  "max_response_bytes",
+];
 const NORMALIZED_COLUMNS = [
   "station_or_segment_id",
   "timestamp_local",
@@ -181,12 +187,13 @@ export async function loadMetadata(metadataDirectory) {
   return { highways, detectors, stations };
 }
 
-export async function normalizeChunk(rawPath, normalizedPath, metadata, config) {
+export async function normalizeChunk(rawPath, normalizedPath, metadata, config, chunk) {
   const input = createReadStream(rawPath, { encoding: "utf8" });
   const lines = readline.createInterface({ input, crlfDelay: Infinity });
   let headers;
   let rawRows = 0;
   let rejectedRows = 0;
+  let outOfWindowRows = 0;
   const groups = new Map();
   const resolutionSeconds = resolutionToSeconds(config.resolution);
   const hourlyFactor = 3600 / resolutionSeconds;
@@ -204,6 +211,11 @@ export async function normalizeChunk(rawPath, normalizedPath, metadata, config) 
     rawRows += 1;
     const values = parseCsvLine(line);
     const row = Object.fromEntries(headers.map((header, index) => [header, values[index] ?? ""]));
+    const observationDate = row.starttime.slice(0, 10);
+    if (chunk && (observationDate < chunk.start_date || observationDate > chunk.end_date)) {
+      outOfWindowRows += 1;
+      continue;
+    }
     const detector = metadata.detectors.get(Number(row.detector_id));
     const station = detector ? metadata.stations.get(Number(detector.stationid)) : undefined;
     const highway = detector ? metadata.highways.get(Number(detector.highwayid)) : undefined;
@@ -286,7 +298,12 @@ export async function normalizeChunk(rawPath, normalizedPath, metadata, config) 
   output.end();
   await finished(output);
   await rename(temporary, normalizedPath);
-  return { raw_rows: rawRows, normalized_rows: normalizedRows, rejected_rows: rejectedRows };
+  return {
+    raw_rows: rawRows,
+    normalized_rows: normalizedRows,
+    rejected_rows: rejectedRows,
+    out_of_window_rows: outOfWindowRows,
+  };
 }
 
 export async function runCampaign(configInput, options = {}) {
@@ -325,7 +342,7 @@ export async function runCampaign(configInput, options = {}) {
     await writeJsonAtomic(manifestPath, manifest);
     try {
       const raw = await downloadWithRetry(url, rawPath, config, fetchImpl, limiter);
-      const counts = await normalizeChunk(rawPath, normalizedPath, metadata, config);
+      const counts = await normalizeChunk(rawPath, normalizedPath, metadata, config, chunk);
       const normalized = { bytes: (await stat(normalizedPath)).size, sha256: await sha256File(normalizedPath) };
       manifest.chunks[chunk.id] = {
         ...chunk,
@@ -434,10 +451,10 @@ export async function downloadWithRetry(url, targetPath, config, fetchImpl, limi
   throw lastError;
 }
 
-function buildFreewayUrl(chunk, config) {
+export function buildFreewayUrl(chunk, config) {
   const url = new URL("/highways/api/freewaydata/", PORTAL_BASE_URL);
   url.searchParams.set("start_date", chunk.start_date);
-  url.searchParams.set("end_date", chunk.end_date);
+  url.searchParams.set("end_date", addDays(chunk.end_date, 1));
   for (const day of config.days_of_week) url.searchParams.append("days_of_week", String(day));
   url.searchParams.set("format", "csv");
   url.searchParams.append("highway_id", String(chunk.highway_id));
@@ -467,8 +484,27 @@ function retryDelay(retryAfter, attempt) {
 async function loadOrCreateManifest(manifestPath, config, chunks) {
   try {
     const manifest = await readJson(manifestPath);
-    if (JSON.stringify(manifest.config) !== JSON.stringify(config)) {
-      throw new Error("campaign config changed; use a new campaign name or restore the original config");
+    if (manifest.schema_version !== MANIFEST_VERSION) {
+      throw new Error(
+        `campaign manifest uses acquisition schema ${manifest.schema_version}; `
+        + `use a new campaign name for schema ${MANIFEST_VERSION}`,
+      );
+    }
+    if (JSON.stringify(dataConfig(manifest.config)) !== JSON.stringify(dataConfig(config))) {
+      throw new Error(
+        "data-defining campaign config changed; use a new campaign name or restore "
+        + "the dates, highways, resolution, weekdays, chunking, and normalization limits",
+      );
+    }
+    const runtimeChanges = changedRuntimeConfig(manifest.config, config);
+    if (Object.keys(runtimeChanges).length > 0) {
+      manifest.runtime_config_history ??= [];
+      manifest.runtime_config_history.push({ changed_at: now(), changes: runtimeChanges });
+      manifest.config = { ...manifest.config };
+      for (const key of RUNTIME_CONFIG_KEYS) manifest.config[key] = config[key];
+      manifest.access_policy.configured_delay_ms = config.delay_ms;
+      manifest.updated_at = now();
+      await writeJsonAtomic(manifestPath, manifest);
     }
     return manifest;
   } catch (error) {
@@ -492,6 +528,24 @@ async function loadOrCreateManifest(manifestPath, config, chunks) {
   };
   await writeJsonAtomic(manifestPath, manifest);
   return manifest;
+}
+
+function dataConfig(config) {
+  return Object.fromEntries(
+    Object.entries(config)
+      .filter(([key]) => !RUNTIME_CONFIG_KEYS.includes(key))
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
+function changedRuntimeConfig(previous, current) {
+  const changes = {};
+  for (const key of RUNTIME_CONFIG_KEYS) {
+    if (previous[key] !== current[key]) {
+      changes[key] = { from: previous[key], to: current[key] };
+    }
+  }
+  return changes;
 }
 
 async function completedChunkIsValid(chunk, outputRoot) {
@@ -564,6 +618,12 @@ function parseDate(value, name) {
 
 function formatDate(value) {
   return value.toISOString().slice(0, 10);
+}
+
+function addDays(value, days) {
+  const date = parseDate(value, "campaign date");
+  date.setUTCDate(date.getUTCDate() + days);
+  return formatDate(date);
 }
 
 function now() {

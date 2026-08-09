@@ -9,11 +9,6 @@ from backend.app.schemas.traffic import (
     TrafficImportResponse,
     TrafficProfilesResponse,
 )
-from backend.app.schemas.portal import (
-    PortalAcquireRequest,
-    PortalAcquireResponse,
-    PortalHighwaysResponse,
-)
 from backend.app.services.graph_service import GraphUnavailableError
 from backend.app.services.traffic_service import (
     MAX_IMPORT_BYTES,
@@ -21,7 +16,6 @@ from backend.app.services.traffic_service import (
     TrafficProfileMismatchError,
     TrafficProfileNotFoundError,
 )
-from backend.app.services.portal_service import PortalAcquisitionError
 
 router = APIRouter(tags=["traffic"])
 
@@ -70,33 +64,6 @@ def simulate_reliability(
         raise _api_error(409, "traffic_profile_graph_mismatch", str(error)) from error
     except GraphUnavailableError as error:
         raise _api_error(503, "graph_unavailable", str(error)) from error
-
-
-@router.get("/traffic/portal/highways", response_model=PortalHighwaysResponse)
-def portal_highways(request: Request) -> PortalHighwaysResponse:
-    """List public PORTAL highways intersecting the loaded graph region."""
-
-    try:
-        return request.app.state.portal_service.list_highways()
-    except GraphUnavailableError as error:
-        raise _api_error(503, "graph_unavailable", str(error)) from error
-    except PortalAcquisitionError as error:
-        raise _api_error(502, "portal_unavailable", str(error)) from error
-
-
-@router.post("/traffic/portal/acquire", response_model=PortalAcquireResponse)
-def acquire_portal_traffic(
-    payload: PortalAcquireRequest,
-    request: Request,
-) -> PortalAcquireResponse:
-    """Programmatically download and import a bounded PORTAL observation set."""
-
-    try:
-        return request.app.state.portal_service.acquire(payload)
-    except GraphUnavailableError as error:
-        raise _api_error(503, "graph_unavailable", str(error)) from error
-    except PortalAcquisitionError as error:
-        raise _api_error(502, "portal_acquisition_failed", str(error)) from error
 
 
 def _api_error(status_code: int, code: str, message: str) -> HTTPException:

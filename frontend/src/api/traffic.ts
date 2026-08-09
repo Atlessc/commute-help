@@ -38,27 +38,6 @@ export type TrafficImportResponse = {
   profiles: TrafficProfile[]
 }
 
-export type PortalHighway = {
-  id: number
-  name: string
-  direction: string
-  station_count: number
-}
-
-export type PortalAcquireSettings = {
-  startDate: string
-  endDate: string
-  highwayIds: number[]
-  resolution: '00:15:00' | '01:00:00'
-}
-
-export type PortalAcquireResponse = {
-  requested_highways: PortalHighway[]
-  downloaded_observation_count: number
-  normalized_station_count: number
-  import_result: TrafficImportResponse
-}
-
 export type ReliabilitySettings = {
   planningMode: 'arrive_by' | 'depart_at'
   arrivalDeadline: string
@@ -114,30 +93,6 @@ export async function importTraffic(
   form.append('source_name', sourceName)
   return parseResponse(
     await fetch('/api/traffic/import', { method: 'POST', body: form }),
-  )
-}
-
-export async function listPortalHighways(signal?: AbortSignal): Promise<PortalHighway[]> {
-  const response = await fetch('/api/traffic/portal/highways', { signal })
-  const payload = await parseResponse<{ highways: PortalHighway[] }>(response)
-  return payload.highways
-}
-
-export async function acquirePortalTraffic(
-  settings: PortalAcquireSettings,
-): Promise<PortalAcquireResponse> {
-  return parseResponse(
-    await fetch('/api/traffic/portal/acquire', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        start_date: settings.startDate,
-        end_date: settings.endDate,
-        highway_ids: settings.highwayIds,
-        resolution: settings.resolution,
-        days_of_week: [2, 3, 4, 5, 6],
-      }),
-    }),
   )
 }
 

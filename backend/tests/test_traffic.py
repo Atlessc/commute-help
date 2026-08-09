@@ -1,13 +1,10 @@
 """Phase 6 traffic import, calibration, and reliability tests."""
 
 from pathlib import Path
-import json
 
-import httpx
 import networkx as nx
 import pandas as pd
 from fastapi.testclient import TestClient
-from pyproj import Transformer
 from shapely.geometry import LineString, box
 
 from backend.app.core.settings import Settings
@@ -254,108 +251,13 @@ def test_travel_time_observations_can_calibrate_without_speed(tmp_path: Path) ->
     assert payload["profiles"][0]["observation_count"] == 2
 
 
-def test_portal_api_acquisition_joins_lanes_and_imports_profiles(tmp_path: Path) -> None:
-    application = _client(tmp_path).app
-    to_web_mercator = Transformer.from_crs(
-        "EPSG:4326", "EPSG:3857", always_xy=True
-    )
-    x, y = to_web_mercator.transform(-122.675, 45.515)
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        path = request.url.path
-        if path.endswith("/highwaymetadata/"):
-            payload = [
-                {
-                    "highwayid": 3,
-                    "direction": "NORTH",
-                    "highwayname": "I-205",
-                    "oppositehighwayid": 4,
-                }
-            ]
-        elif path.endswith("/detectormetadata/"):
-            payload = [
-                {"detectorid": 100, "stationid": 10, "highwayid": 3},
-                {"detectorid": 101, "stationid": 10, "highwayid": 3},
-            ]
-        elif path.endswith("/stationmetadata/"):
-            payload = {
-                "type": "FeatureCollection",
-                "features": [
-                    {
-                        "type": "Feature",
-                        "geometry": {"type": "Point", "coordinates": [x, y]},
-                        "properties": {
-                            "stationid": 10,
-                            "highwayid": 3,
-                            "locationtext": "Fixture station",
-                        },
-                    }
-                ],
-            }
-        elif path.endswith("/freewaydata/"):
-            assert request.url.params.get_list("highway_id") == ["3"]
-            assert request.url.params.get_list("days_of_week") == [
-                "2", "3", "4", "5", "6"
-            ]
-            payload = [
-                {
-                    "starttime": "2025-09-08T07:15:00-07:00",
-                    "resolution": "00:15:00",
-                    "detector_id": 100,
-                    "speed": 50,
-                    "volume": 10,
-                    "occupancy": 5,
-                    "countreadings": 44,
-                },
-                {
-                    "starttime": "2025-09-08T07:15:00-07:00",
-                    "resolution": "00:15:00",
-                    "detector_id": 101,
-                    "speed": 40,
-                    "volume": 20,
-                    "occupancy": 7,
-                    "countreadings": 43,
-                },
-            ]
-        else:
-            raise AssertionError(f"Unexpected PORTAL path: {path}")
-        return httpx.Response(200, content=json.dumps(payload).encode())
-
-    with TestClient(application) as client:
-        portal = application.state.portal_service
-        portal._client.close()
-        portal._client = httpx.Client(
-            transport=httpx.MockTransport(handler),
-            base_url="https://new.portal.its.pdx.edu",
-        )
+def test_live_portal_download_endpoints_are_not_exposed(tmp_path: Path) -> None:
+    with _client(tmp_path) as client:
         highways = client.get("/api/traffic/portal/highways")
-        acquired = client.post(
-            "/api/traffic/portal/acquire",
-            json={
-                "start_date": "2025-09-08",
-                "end_date": "2025-09-08",
-                "highway_ids": [3],
-                "resolution": "00:15:00",
-            },
-        )
+        acquisition = client.post("/api/traffic/portal/acquire", json={})
 
-    assert highways.status_code == 200, highways.text
-    assert highways.json()["highways"] == [
-        {"id": 3, "name": "I-205", "direction": "NORTH", "station_count": 1}
-    ]
-    assert acquired.status_code == 200, acquired.text
-    payload = acquired.json()
-    assert payload["downloaded_observation_count"] == 2
-    assert payload["normalized_station_count"] == 1
-    assert payload["import_result"]["quality"]["accepted_count"] == 1
-    assert payload["import_result"]["profiles"][0]["volume_observation_count"] == 1
-    normalized_path = next((tmp_path / "traffic" / "normalized").glob("*.parquet"))
-    normalized = pd.read_parquet(normalized_path)
-    assert normalized.iloc[0]["volume"] == 120
-    assert round(float(normalized.iloc[0]["speed_kph"]), 3) == 69.738
-    raw_directory = next((tmp_path / "traffic" / "raw").iterdir())
-    assert (raw_directory / "portal-freewaydata.json").exists()
-    assert (raw_directory / "portal-request.json").exists()
+    assert highways.status_code == 404
+    assert acquisition.status_code == 404
 
 
 def test_invalid_import_is_rejected_without_database_record(tmp_path: Path) -> None:

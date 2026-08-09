@@ -1,4 +1,16 @@
-import { Check, Crosshair, LoaderCircle, Save, SlidersHorizontal, Trash2 } from 'lucide-react'
+import {
+  CalendarClock,
+  Check,
+  Crosshair,
+  ExternalLink,
+  LoaderCircle,
+  MapPinned,
+  Save,
+  SlidersHorizontal,
+  Trash2,
+  TriangleAlert,
+} from 'lucide-react'
+import type { ClosurePreset } from '../../api/closurePresets'
 import type {
   ClosureRoadSelectionResponse,
   ClosureSectionDraft,
@@ -7,6 +19,10 @@ import type {
 } from '../../api/routing'
 
 type ClosurePanelProps = {
+  presets: ClosurePreset[]
+  presetsLoading: boolean
+  presetsError: string | null
+  onApplyPreset: (preset: ClosurePreset) => void
   sections: ClosureSectionDraft[]
   selectedEdgeIds: string[]
   picking: boolean
@@ -41,6 +57,10 @@ type ClosurePanelProps = {
 }
 
 export function ClosurePanel({
+  presets,
+  presetsLoading,
+  presetsError,
+  onApplyPreset,
   sections,
   selectedEdgeIds,
   picking,
@@ -83,6 +103,32 @@ export function ClosurePanel({
         Pick as many road sections as needed, choose the affected direction,
         then define a full closure, lane restriction, or temporary speed.
       </p>
+
+      <div className="closure-presets" aria-label="Premarked closure plans">
+        <div className="closure-presets__heading">
+          <MapPinned size={17} aria-hidden="true" />
+          <div>
+            <strong>Premarked closure</strong>
+            <small>Load an official project layout without clicking every road.</small>
+          </div>
+        </div>
+        {presetsLoading ? (
+          <div className="closure-preset-status" role="status">
+            <LoaderCircle className="spin" size={16} aria-hidden="true" />
+            Loading closure plans…
+          </div>
+        ) : null}
+        {presetsError ? (
+          <small className="schedule-error" role="alert">{presetsError}</small>
+        ) : null}
+        {presets.map((preset) => (
+          <ClosurePresetCard
+            key={preset.id}
+            preset={preset}
+            onApply={() => onApplyPreset(preset)}
+          />
+        ))}
+      </div>
 
       <div className="departure-condition">
         <div>
@@ -220,6 +266,91 @@ export function ClosurePanel({
       </button>
     </section>
   )
+}
+
+type ClosurePresetCardProps = {
+  preset: ClosurePreset
+  onApply: () => void
+}
+
+function ClosurePresetCard({ preset, onApply }: ClosurePresetCardProps) {
+  const fullClosures = preset.sections.filter(
+    (section) => section.restriction.type === 'full',
+  ).length
+  const laneRestrictions = preset.sections.length - fullClosures
+  const start = new Date(preset.timing.mainline_starts_at)
+  const rampStart = preset.timing.ramp_closures_may_start_at
+    ? new Date(preset.timing.ramp_closures_may_start_at)
+    : null
+  const canApply = preset.graph_status === 'current'
+
+  return (
+    <article className="closure-preset-card">
+      <div className="closure-preset-card__title">
+        <div>
+          <strong>{preset.name}</strong>
+          <small>{preset.summary}</small>
+        </div>
+        <span>{preset.sections.length} sections</span>
+      </div>
+      <div className="closure-preset-card__facts">
+        <span>{fullClosures} fully closed</span>
+        <span>{laneRestrictions} one-lane sections</span>
+      </div>
+      <div className="closure-preset-card__timing">
+        <CalendarClock size={15} aria-hidden="true" />
+        <span>
+          Mainline starts {formatPresetDate(start)}.
+          {rampStart ? ` Ramps may close at ${formatPresetTime(rampStart)}.` : ''}{' '}
+          {preset.timing.duration_note}
+        </span>
+      </div>
+      {!preset.timing.exact_end_confirmed ? (
+        <div className="closure-preset-card__warning">
+          <TriangleAlert size={15} aria-hidden="true" />
+          <span>
+            Exact reopening is not confirmed. Loaded sections stay active for the
+            trip time you choose; add schedules only after ODOT publishes the end.
+          </span>
+        </div>
+      ) : null}
+      {preset.warnings.map((warning) => (
+        <small className="schedule-error" key={warning}>{warning}</small>
+      ))}
+      <div className="closure-preset-card__actions">
+        <button type="button" disabled={!canApply} onClick={onApply}>
+          <MapPinned size={16} aria-hidden="true" />
+          {canApply ? 'Apply marked closure' : 'Graph review required'}
+        </button>
+        {preset.sources[0] ? (
+          <a href={preset.sources[0].url} target="_blank" rel="noreferrer">
+            Project details <ExternalLink size={13} aria-hidden="true" />
+          </a>
+        ) : null}
+      </div>
+    </article>
+  )
+}
+
+function formatPresetDate(value: Date): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  }).format(value)
+}
+
+function formatPresetTime(value: Date): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  }).format(value)
 }
 
 type ClosureSectionCardProps = {

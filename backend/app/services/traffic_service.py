@@ -359,6 +359,22 @@ class TrafficService:
                 "The selected traffic profile's normalized observations are unavailable."
             ) from error
 
+        if {
+            "artifact_schema_version",
+            "period",
+            "bucket_minute",
+            "edge_id",
+            "volume",
+            "speed_kph",
+            "observation_count",
+        }.issubset(frame.columns):
+            return self._compiled_background_snapshot(
+                profile,
+                frame,
+                departure_time,
+                manifest.metrics.directed_edges,
+            )
+
         frame["parsed_timestamp"] = pd.to_datetime(
             frame["timestamp_local"], utc=True
         ).dt.tz_convert(LOCAL_TIMEZONE)
@@ -427,6 +443,60 @@ class TrafficService:
             observation_count=int(per_edge["observation_count"].sum()),
             matched_edge_count=len(set(flow_by_edge) | set(speed_by_edge)),
             network_edge_count=manifest.metrics.directed_edges,
+        )
+
+    def _compiled_background_snapshot(
+        self,
+        profile: TrafficProfile,
+        frame: pd.DataFrame,
+        departure_time: datetime,
+        network_edge_count: int,
+    ) -> BackgroundTrafficSnapshot:
+        """Read the bounded edge/bucket artifact produced by the offline campaign."""
+
+        frame = frame.loc[frame["period"] == profile.period].copy()
+        if frame.empty:
+            return self._empty_background_snapshot(profile, network_edge_count)
+        frame["bucket_minute"] = pd.to_numeric(
+            frame["bucket_minute"], errors="coerce"
+        )
+        local_departure = departure_time.astimezone(LOCAL_TIMEZONE)
+        requested_bucket = local_departure.hour * 60 + local_departure.minute // 15 * 15
+        available_buckets = frame["bucket_minute"].dropna().astype(int).unique()
+        if not len(available_buckets):
+            return self._empty_background_snapshot(profile, network_edge_count)
+        selected_bucket = min(
+            available_buckets,
+            key=lambda bucket: abs(int(bucket) - requested_bucket),
+        )
+        frame = frame.loc[frame["bucket_minute"] == selected_bucket].copy()
+        frame["volume"] = pd.to_numeric(frame["volume"], errors="coerce")
+        frame["speed_kph"] = pd.to_numeric(frame["speed_kph"], errors="coerce")
+        frame["observation_count"] = pd.to_numeric(
+            frame["observation_count"], errors="coerce"
+        ).fillna(0)
+        flow_by_edge = {
+            str(row.edge_id): float(row.volume)
+            for row in frame.itertuples()
+            if pd.notna(row.volume) and float(row.volume) >= 0
+        }
+        speed_by_edge = {
+            str(row.edge_id): float(row.speed_kph)
+            for row in frame.itertuples()
+            if pd.notna(row.speed_kph) and float(row.speed_kph) > 0
+        }
+        hour, minute = divmod(int(selected_bucket), 60)
+        return BackgroundTrafficSnapshot(
+            profile_id=profile.id,
+            profile_version=profile.version,
+            source_name=profile.source_name,
+            source_window=profile.source_window,
+            bucket_label=f"{hour:02d}:{minute:02d} Pacific weekday",
+            flow_by_edge=flow_by_edge,
+            speed_kph_by_edge=speed_by_edge,
+            observation_count=int(frame["observation_count"].sum()),
+            matched_edge_count=len(set(flow_by_edge) | set(speed_by_edge)),
+            network_edge_count=network_edge_count,
         )
 
     @staticmethod
