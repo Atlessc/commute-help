@@ -57,6 +57,7 @@ if (pythonVersion !== '3.12') {
 run('npm', ['install'])
 run('npm', ['--prefix', 'frontend', 'install'])
 run('.venv/bin/python', ['-m', 'pip', 'install', '-r', 'backend/requirements.txt'])
+run('.venv/bin/python', ['-m', 'scripts.sumo_doctor'])
 
 console.log('\nSetup complete. Start Commute Help with `npm run dev`.')
 console.log('Run `npm run doctor` to verify local data and dependencies.')

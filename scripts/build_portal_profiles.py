@@ -52,6 +52,16 @@ def main() -> int:
     parser.add_argument("--graph-dir", type=Path, default=Path("data/graphs"))
     parser.add_argument("--database", type=Path, default=Path("data/app.db"))
     parser.add_argument(
+        "--matches",
+        type=Path,
+        help="Reviewed station-edge matches; defaults to the processed campaign directory.",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="Artifact directory; useful for candidate-graph builds that must not replace live profiles.",
+    )
+    parser.add_argument(
         "--no-register",
         action="store_true",
         help="Build and validate artifacts without changing SQLite.",
@@ -60,7 +70,7 @@ def main() -> int:
     campaign = args.campaign.resolve()
     processed = args.processed.resolve()
     graph_directory = args.graph_dir.resolve()
-    output = processed / "profiles"
+    output = (args.output or processed / "profiles").resolve()
     logger = RunLogger(output / "profile-build.log")
     logger.write(f"START {COMPILER_VERSION}")
     try:
@@ -70,8 +80,12 @@ def main() -> int:
         campaign_manifest = json.loads(
             (campaign / "campaign-manifest.json").read_text(encoding="utf-8")
         )
-        match_path = processed / "station-matching" / "station-edge-matches.parquet"
-        match_report_path = processed / "station-matching" / "station-match-report.json"
+        match_path = (
+            args.matches.resolve()
+            if args.matches
+            else processed / "station-matching" / "station-edge-matches.parquet"
+        )
+        match_report_path = match_path.parent / "station-match-report.json"
         if not match_path.exists() or not match_report_path.exists():
             raise PortalProfileCompileError(
                 "Run npm run traffic:match-stations before compiling profiles."

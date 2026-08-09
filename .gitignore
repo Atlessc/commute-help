@@ -26,6 +26,23 @@ data/traffic/portal-campaign*.json
 data/traffic/traffic-profile-manifest.json
 data/exports/
 data/backups/
+data/sumo/
+data/benchmarks/private/
+
+*.net.xml
+*.rou.xml
+*.sumocfg
+*.state.xml
+*.state.xml.gz
+tripinfo*.xml
+tripinfo*.xml.gz
+queue*.xml
+queue*.xml.gz
+edgedata*.xml
+edgedata*.xml.gz
+
+!backend/tests/fixtures/sumo/
+!backend/tests/fixtures/sumo/**
 
 AGENTS.md
 /tmp

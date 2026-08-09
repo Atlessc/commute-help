@@ -261,6 +261,20 @@ For commute decisions, prioritize median, p85/p90/p95, on-time probability, and 
 - Provide progress and cancellation for simulations that may take more than a few seconds.
 - Profile before making large architectural changes.
 
+## SUMO physical-simulation rules
+
+- Preserve NetworkX as the fast planning engine; SUMO is a separate physical-simulation subsystem.
+- Never run SUMO or libsumo inside the FastAPI process. Long runs use a separate worker process.
+- Use one local SUMO worker by default and enforce configured time, disk, area, and experiment limits.
+- Simulation inputs must be local files under approved data roots; never accept a URL as model input.
+- Every run records a deterministic seed and exact SUMO, OSM source, network, demand, traffic-control, and model versions.
+- Never call a SUMO result historically calibrated until its frozen model bundle passes the required validation gates.
+- Never apply a closure without accepted app-edge-to-SUMO-edge mappings for every affected direction.
+- Regional closure simulation precedes microscopic affected-area simulation.
+- Microscopic runs default to one SUMO vehicle per modeled vehicle unless physical scaling equivalence is validated.
+- Never use production regional data in committed tests; use tiny synthetic SUMO fixtures.
+- Calibration campaigns must resume from completed experiment records and must not tune against frozen final-test data.
+
 ## Security and privacy
 
 - Treat home/work locations and commute patterns as sensitive local data.

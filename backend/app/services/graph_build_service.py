@@ -156,6 +156,38 @@ def download_drive_graph(region: RegionDefinition, cache_dir: Path) -> nx.MultiD
     )
 
 
+def load_frozen_drive_graph(source_path: Path, region: RegionDefinition) -> nx.MultiDiGraph:
+    """Build the drive graph from a frozen OSM source recovered from the original query."""
+
+    buffered_projected, projected_crs = ox.projection.project_geometry(region.geometry)
+    buffered_projected = buffered_projected.buffer(500)
+    buffered_region, _ = ox.projection.project_geometry(
+        buffered_projected,
+        crs=projected_crs,
+        to_latlong=True,
+    )
+    buffered_graph = ox.graph.graph_from_xml(
+        source_path,
+        bidirectional=False,
+        simplify=False,
+        retain_all=True,
+    )
+    buffered_graph = ox.truncate.truncate_graph_polygon(
+        buffered_graph,
+        buffered_region,
+        truncate_by_edge=True,
+    )
+    buffered_graph = ox.simplification.simplify_graph(buffered_graph)
+    graph = ox.truncate.truncate_graph_polygon(
+        buffered_graph,
+        region.geometry,
+        truncate_by_edge=True,
+    )
+    street_counts = ox.stats.count_streets_per_node(buffered_graph, nodes=graph.nodes)
+    nx.set_node_attributes(graph, values=street_counts, name="street_count")
+    return graph
+
+
 def normalize_graph(graph: nx.MultiDiGraph, graph_version: str) -> nx.MultiDiGraph:
     """Add stable identity, travel time, and explicit routing defaults."""
 
@@ -327,6 +359,10 @@ def write_graph_artifacts(
     graph_version: str,
     output_dir: Path,
     validation_report: dict[str, Any],
+    *,
+    source_label: str = "OpenStreetMap via OSMnx Overpass download",
+    osm_source_version: str | None = None,
+    osm_source_sha256: str | None = None,
 ) -> GraphManifest:
     """Write GraphML, GeoParquet tables, validation, and a checksum manifest."""
 
@@ -355,7 +391,9 @@ def write_graph_artifacts(
     manifest = GraphManifest(
         schema_version=1,
         graph_version=graph_version,
-        source="OpenStreetMap via OSMnx Overpass download",
+        source=source_label,
+        osm_source_version=osm_source_version,
+        osm_source_sha256=osm_source_sha256,
         built_at=datetime.now(PACIFIC).isoformat(),
         region=GraphRegion(id=region.id, name=region.name, bounds=region.bounds),
         network_type="drive",

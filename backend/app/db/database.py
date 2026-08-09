@@ -37,7 +37,7 @@ class DatabaseManager:
             connection.execute(
                 """
                 INSERT INTO app_metadata (key, value)
-                VALUES ('schema_version', '1')
+                VALUES ('schema_version', '2')
                 ON CONFLICT(key) DO UPDATE SET
                     value = excluded.value,
                     updated_at = CURRENT_TIMESTAMP
@@ -123,6 +123,32 @@ class DatabaseManager:
 
                 CREATE INDEX IF NOT EXISTS idx_diversion_cache_created_at
                 ON diversion_cache (created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS simulation_runs (
+                    id TEXT PRIMARY KEY,
+                    run_kind TEXT NOT NULL CHECK (run_kind IN ('validation')),
+                    status TEXT NOT NULL CHECK (status IN (
+                        'queued', 'running', 'completed', 'failed',
+                        'cancel_requested', 'cancelled'
+                    )),
+                    run_key TEXT NOT NULL,
+                    seed INTEGER NOT NULL,
+                    graph_version TEXT NOT NULL,
+                    sumo_version TEXT NOT NULL,
+                    sumo_network_version TEXT NOT NULL,
+                    request_json TEXT NOT NULL,
+                    summary_json TEXT,
+                    artifact_dir TEXT NOT NULL,
+                    progress REAL NOT NULL DEFAULT 0.0,
+                    current_sim_second REAL,
+                    created_at TEXT NOT NULL,
+                    started_at TEXT,
+                    finished_at TEXT,
+                    error_message TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_simulation_runs_status
+                ON simulation_runs(status, created_at DESC);
                 """
             )
 

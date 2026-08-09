@@ -30,8 +30,8 @@ npm run setup
 ```
 
 This creates or validates `.venv`, installs the root and frontend Node
-dependencies, and installs `backend/requirements.txt`. It does not download a
-road network. If this Mac does not have the generated graph yet, run
+dependencies, installs `backend/requirements.txt`, and verifies the pinned local
+SUMO runtime. It does not download a road network. If this Mac does not have the generated graph yet, run
 `npm run graph:build` once after setup.
 
 Verify the installation and local data without changing anything:
@@ -39,6 +39,31 @@ Verify the installation and local data without changing anything:
 ```bash
 npm run doctor
 ```
+
+Inspect only the physical-simulation runtime:
+
+```bash
+npm run sumo:doctor
+```
+
+SUMO 1.27.1, `sumolib`, and `libsumo` are pinned locally. The frozen-v2 app graph
+and active SUMO network share one checksum-recorded OSM source. The physical
+network is ready, but the model bundle remains intentionally unavailable until
+the 24/7 schedule, demand, calibration, and validation phases pass.
+
+The Phase 2 validation API is deliberately small:
+
+```text
+GET  /api/simulation/status
+POST /api/simulation/runs
+GET  /api/simulation/runs/{run_id}
+POST /api/simulation/runs/{run_id}/cancel
+```
+
+It runs the tiny committed closure fixture in an isolated process to prove
+progress, rerouting, TripInfo parsing, deterministic seeds, and cancellation.
+It is not yet the Portland scenario-run endpoint and its result remains
+uncalibrated.
 
 ## Daily startup
 
@@ -73,6 +98,8 @@ Git.
 | `COMMUTE_HELP_GRAPH_PATH` | `data/graphs/portland-vancouver.graphml` | Generated routing graph |
 | `COMMUTE_HELP_GRAPH_MANIFEST_PATH` | `data/graphs/graph-manifest.json` | Version and checksum manifest |
 | `COMMUTE_HELP_TRAFFIC_PATH` | `data/traffic` | Ignored raw, normalized, and profile artifacts |
+| `COMMUTE_HELP_SUMO_RUNTIME_MODE` | `auto` | Prefer `libsumo`, with local subprocess fallback |
+| `COMMUTE_HELP_SUMO_OFFLINE_ONLY` | `true` | Keep physical simulation on approved local inputs |
 
 The frontend always calls relative `/api/...` URLs. Vite proxies those requests
 to FastAPI, which keeps the application usable from LAN browsers.

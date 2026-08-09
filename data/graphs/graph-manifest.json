@@ -1,8 +1,10 @@
 {
   "schema_version": 1,
-  "graph_version": "2026-07-31-portland-vancouver-v1",
-  "source": "OpenStreetMap via OSMnx Overpass download",
-  "built_at": "2026-07-31T19:17:49.238251-07:00",
+  "graph_version": "2026-08-08-portland-vancouver-frozen-v2",
+  "source": "Frozen OpenStreetMap XML recovered from complete OSMnx Overpass cache",
+  "osm_source_version": "pv-osm-2026-08-08-v1",
+  "osm_source_sha256": "99b2b248794447b6990b22f5459d747661b7d6b19065b158a7bebee35cf40c1f",
+  "built_at": "2026-08-08T22:04:01.195156-07:00",
   "region": {
     "id": "portland-vancouver-v1",
     "name": "Portland-Vancouver buffered routing region",
@@ -17,31 +19,31 @@
   "build_tool": "commute-help-graph-builder-v1 with OSMnx 2.1.1",
   "validation_passed": true,
   "metrics": {
-    "nodes": 85210,
-    "directed_edges": 213927,
+    "nodes": 85222,
+    "directed_edges": 213954,
     "weakly_connected_components": 97,
     "largest_weak_component_percent": 99.724
   },
   "artifacts": {
     "graphml": {
       "filename": "portland-vancouver.graphml",
-      "sha256": "0db77904f3bba60d795cc779aff430b7dc154201d96610ee9c6d6e06cbb7848c",
-      "size_bytes": 286930193
+      "sha256": "3d30d3a200da507dca15e43e74a731ebdcfd6e612e27d5109cd89178df58f10b",
+      "size_bytes": 286978373
     },
     "nodes_parquet": {
       "filename": "nodes.parquet",
-      "sha256": "eaeb9716e2ff7664c5f6ffcfe3e0523f273ded67167a38511556610556647411",
-      "size_bytes": 3769066
+      "sha256": "6a3130938e4b494997e662f32262b91735a6b2668a1ff98a544263e423726012",
+      "size_bytes": 3772255
     },
     "edges_parquet": {
       "filename": "edges.parquet",
-      "sha256": "0d9b29f92d938379b86fe2fbdf0140d30db161f2873e68574a29c84a153d7075",
-      "size_bytes": 47892821
+      "sha256": "9475612a71e590e9760dbe0b47019204287516355cbb1423ca28f9b072c1fbd0",
+      "size_bytes": 48054126
     },
     "validation_report": {
       "filename": "validation-report.json",
-      "sha256": "29a4304a1ef8aa88c3e09ae0e4c2878dac04ea2bdee35c4601a81783db40e3c1",
-      "size_bytes": 1187
+      "sha256": "763fd8c884131f29740a4cfc607e3415f644b96f9ba9768be7699ffdf6026fb1",
+      "size_bytes": 1194
     }
   }
 }

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from backend.app.core.settings import Settings, get_settings
 from backend.app.schemas.graph import GraphManifest
+from backend.app.services.sumo.environment import SumoEnvironmentService
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,7 @@ def run_checks(settings: Settings, root: Path = Path(".")) -> list[Check]:
         _path_check(root / "frontend/node_modules", "Frontend dependencies"),
         _database_check(settings.database_path),
         _graph_check(settings.graph_path, settings.graph_manifest_path),
+        _sumo_check(settings),
     ]
     return checks
 
@@ -89,6 +91,19 @@ def _graph_check(graph_path: Path, manifest_path: Path) -> Check:
     except (OSError, ValueError, json.JSONDecodeError):
         return Check("Road graph", "fail", "manifest is invalid; run `npm run graph:validate`")
     return Check("Road graph", "ok", f"{manifest.graph_version} passed checksum verification")
+
+
+def _sumo_check(settings: Settings) -> Check:
+    capabilities = SumoEnvironmentService(settings).capabilities()
+    if not capabilities.available or not capabilities.netconvert_available:
+        return Check("SUMO runtime", "fail", "missing or incomplete; run `npm run setup`")
+    model = "model ready" if capabilities.model_ready else "no frozen model bundle yet"
+    return Check(
+        "SUMO runtime",
+        "ok",
+        f"{capabilities.sumo_version or 'unknown version'} via "
+        f"{capabilities.runtime_mode}; {model}",
+    )
 
 
 def _sha256(path: Path) -> str:

@@ -1,16 +1,16 @@
 {
   "data_quality": {
-    "estimated_lane_edges": 162631,
+    "estimated_lane_edges": 162606,
     "extreme_length_edges": 0,
     "invalid_or_missing_geometry_edges": 0,
     "missing_speed_edges": 0,
-    "unnamed_road_edges": 6260,
+    "unnamed_road_edges": 6265,
     "zero_or_missing_length_edges": 0
   },
   "gate_failures": [],
   "gate_passed": true,
-  "generated_at": "2026-07-31T19:25:37.122926-07:00",
-  "graph_version": "2026-07-31-portland-vancouver-v1",
+  "generated_at": "2026-08-08T22:03:33.285834-07:00",
+  "graph_version": "2026-08-08-portland-vancouver-frozen-v2",
   "representative_routes": [
     {
       "name": "Portland to Vancouver civic centers",
@@ -31,13 +31,13 @@
   "schema_version": 1,
   "topology": {
     "bridge_edges": 2047,
-    "dead_end_nodes": 22026,
-    "directed_edges": 213927,
+    "dead_end_nodes": 22030,
+    "directed_edges": 213954,
     "isolated_nodes": 0,
-    "largest_weak_component_nodes": 84975,
+    "largest_weak_component_nodes": 84987,
     "largest_weak_component_percent": 99.724,
-    "nodes": 85210,
-    "one_way_edges": 13587,
+    "nodes": 85222,
+    "one_way_edges": 13588,
     "strongly_connected_components": 221,
     "tunnel_edges": 40,
     "weakly_connected_components": 97

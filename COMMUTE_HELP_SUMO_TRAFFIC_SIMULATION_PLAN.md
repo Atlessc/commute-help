@@ -1,5 +1,19 @@
 # Commute Help - Local Traffic Simulation and SUMO Integration Plan
 
+## Implementation status — 2026-08-08
+
+- [x] SUMO Phase 0 — pinned local runtime, doctor command, and readiness API.
+- [x] SUMO Phase 1 — frozen OSM source, same-source NetworkX/SUMO rebuild,
+  conservative directed edge bridge, graph-state migration audit, rebuilt traffic
+  artifacts, topology gate, recoverable promotion, and active SUMO network.
+- [x] SUMO Phase 2 — isolated deterministic worker, SQLite run records, progress,
+  create/read/cancel API, TripInfo parsing, closure reroute proof, reproducibility,
+  cancellation, and orphan-process check using the tiny committed fixture.
+- [ ] SUMO Phase 3 — build and validate the default 24/7 traffic schedule.
+
+The active physical network is still **uncalibrated**. Completing Phases 0–2
+proves the runtime and orchestration, not Portland traffic accuracy.
+
 > Repository: `Atlessc/commute-help`  
 > Reviewed branch: `master`  
 > Plan date: 2026-08-08  

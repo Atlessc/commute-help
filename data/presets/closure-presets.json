@@ -5,7 +5,7 @@
       "id": "i5-rose-quarter-southbound-fall-2026",
       "name": "I-5 Rose Quarter southbound closure",
       "summary": "Fall 2026 I-5 southbound closure between I-405 and I-84, including marked ramp closures and the one-lane Broadway/Weidler local-access path.",
-      "graph_version": "2026-07-31-portland-vancouver-v1",
+      "graph_version": "2026-08-08-portland-vancouver-frozen-v2",
       "timing": {
         "mainline_starts_at": "2026-09-11T22:00:00-07:00",
         "ramp_closures_may_start_at": "2026-09-11T21:00:00-07:00",
@@ -32,14 +32,14 @@
       "sections": [
         {
           "selection": {
-            "graph_version": "2026-07-31-portland-vancouver-v1",
+            "graph_version": "2026-08-08-portland-vancouver-frozen-v2",
             "road_name": "N Greeley Avenue on-ramp to I-5 southbound",
             "distance_m": 2.8,
-            "selected_edge_id": "24e87e49a028181377d95054",
+            "selected_edge_id": "236873828004716d555816b7",
             "directions": [
               {
                 "edge": {
-                  "edge_id": "24e87e49a028181377d95054",
+                  "edge_id": "236873828004716d555816b7",
                   "u": "1321229832",
                   "v": "254805392",
                   "key": 0,
@@ -124,7 +124,7 @@
             ]
           },
           "selected_edge_ids": [
-            "24e87e49a028181377d95054"
+            "236873828004716d555816b7"
           ],
           "restriction": {
             "type": "full"
@@ -133,14 +133,14 @@
         },
         {
           "selection": {
-            "graph_version": "2026-07-31-portland-vancouver-v1",
+            "graph_version": "2026-08-08-portland-vancouver-frozen-v2",
             "road_name": "I-5 southbound local-access lane: I-405 split to NE Skidmore Street",
             "distance_m": 0.6,
-            "selected_edge_id": "ffc70d7c27a17a7520a31889",
+            "selected_edge_id": "37c9f80accd3ff42e8027efe",
             "directions": [
               {
                 "edge": {
-                  "edge_id": "ffc70d7c27a17a7520a31889",
+                  "edge_id": "37c9f80accd3ff42e8027efe",
                   "u": "254805392",
                   "v": "40382443",
                   "key": 0,
@@ -171,7 +171,7 @@
             ]
           },
           "selected_edge_ids": [
-            "ffc70d7c27a17a7520a31889"
+            "37c9f80accd3ff42e8027efe"
           ],
           "restriction": {
             "type": "lane",
@@ -181,14 +181,14 @@
         },
         {
           "selection": {
-            "graph_version": "2026-07-31-portland-vancouver-v1",
+            "graph_version": "2026-08-08-portland-vancouver-frozen-v2",
             "road_name": "I-5 southbound local-access lane: NE Skidmore Street to Broadway/Weidler approach",
             "distance_m": 2.2,
-            "selected_edge_id": "129e2d9977ad2e4ebc2b0055",
+            "selected_edge_id": "8c2c719408b9d8d60bd3a9af",
             "directions": [
               {
                 "edge": {
-                  "edge_id": "129e2d9977ad2e4ebc2b0055",
+                  "edge_id": "8c2c719408b9d8d60bd3a9af",
                   "u": "40382443",
                   "v": "40397036",
                   "key": 0,
@@ -258,7 +258,7 @@
             ]
           },
           "selected_edge_ids": [
-            "129e2d9977ad2e4ebc2b0055"
+            "8c2c719408b9d8d60bd3a9af"
           ],
           "restriction": {
             "type": "lane",
@@ -268,14 +268,14 @@
         },
         {
           "selection": {
-            "graph_version": "2026-07-31-portland-vancouver-v1",
+            "graph_version": "2026-08-08-portland-vancouver-frozen-v2",
             "road_name": "I-5 southbound local-access lane: Broadway/Weidler exit approach",
             "distance_m": 0.3,
-            "selected_edge_id": "14870ceaf3170dbf2f3d21e3",
+            "selected_edge_id": "a85096222e8147c735760bdf",
             "directions": [
               {
                 "edge": {
-                  "edge_id": "14870ceaf3170dbf2f3d21e3",
+                  "edge_id": "a85096222e8147c735760bdf",
                   "u": "40397036",
                   "v": "1343610044",
                   "key": 0,
@@ -331,7 +331,7 @@
             ]
           },
           "selected_edge_ids": [
-            "14870ceaf3170dbf2f3d21e3"
+            "a85096222e8147c735760bdf"
           ],
           "restriction": {
             "type": "lane",
@@ -341,14 +341,14 @@
         },
         {
           "selection": {
-            "graph_version": "2026-07-31-portland-vancouver-v1",
+            "graph_version": "2026-08-08-portland-vancouver-frozen-v2",
             "road_name": "I-5 southbound mainline: Broadway/Weidler split to Moda Center",
             "distance_m": 1.7,
-            "selected_edge_id": "4abccb925b13df5f7002b32e",
+            "selected_edge_id": "c100ea811c864bbbabe6678d",
             "directions": [
               {
                 "edge": {
-                  "edge_id": "4abccb925b13df5f7002b32e",
+                  "edge_id": "c100ea811c864bbbabe6678d",
                   "u": "40397036",
                   "v": "40413533",
                   "key": 0,
@@ -453,7 +453,7 @@
             ]
           },
           "selected_edge_ids": [
-            "4abccb925b13df5f7002b32e"
+            "c100ea811c864bbbabe6678d"
           ],
           "restriction": {
             "type": "full"
@@ -462,14 +462,14 @@
         },
         {
           "selection": {
-            "graph_version": "2026-07-31-portland-vancouver-v1",
+            "graph_version": "2026-08-08-portland-vancouver-frozen-v2",
             "road_name": "NE Wheeler Avenue/Moda Center on-ramp to I-5 southbound",
             "distance_m": 3.7,
-            "selected_edge_id": "04ebc1bc05350fda6767b658",
+            "selected_edge_id": "d02cbc48f4a62f460c72de82",
             "directions": [
               {
                 "edge": {
-                  "edge_id": "04ebc1bc05350fda6767b658",
+                  "edge_id": "d02cbc48f4a62f460c72de82",
                   "u": "40413546",
                   "v": "40413533",
                   "key": 0,
@@ -541,7 +541,7 @@
             ]
           },
           "selected_edge_ids": [
-            "04ebc1bc05350fda6767b658"
+            "d02cbc48f4a62f460c72de82"
           ],
           "restriction": {
             "type": "full"
@@ -550,14 +550,14 @@
         },
         {
           "selection": {
-            "graph_version": "2026-07-31-portland-vancouver-v1",
+            "graph_version": "2026-08-08-portland-vancouver-frozen-v2",
             "road_name": "I-5 southbound mainline: Moda Center to I-84 split",
             "distance_m": 2.2,
-            "selected_edge_id": "17f9941473ebde90e14de041",
+            "selected_edge_id": "2e8aba5effeb934bdd80d7d7",
             "directions": [
               {
                 "edge": {
-                  "edge_id": "17f9941473ebde90e14de041",
+                  "edge_id": "2e8aba5effeb934bdd80d7d7",
                   "u": "40413533",
                   "v": "3427976322",
                   "key": 0,
@@ -607,7 +607,7 @@
             ]
           },
           "selected_edge_ids": [
-            "17f9941473ebde90e14de041"
+            "2e8aba5effeb934bdd80d7d7"
           ],
           "restriction": {
             "type": "full"
@@ -616,14 +616,14 @@
         },
         {
           "selection": {
-            "graph_version": "2026-07-31-portland-vancouver-v1",
+            "graph_version": "2026-08-08-portland-vancouver-frozen-v2",
             "road_name": "I-5 southbound ramp to I-84 eastbound",
             "distance_m": 3.8,
-            "selected_edge_id": "f47d9782ac8319b615c3859a",
+            "selected_edge_id": "200759525527c1eab701da32",
             "directions": [
               {
                 "edge": {
-                  "edge_id": "f47d9782ac8319b615c3859a",
+                  "edge_id": "200759525527c1eab701da32",
                   "u": "3427976322",
                   "v": "3416907094",
                   "key": 0,
@@ -897,7 +897,7 @@
             ]
           },
           "selected_edge_ids": [
-            "f47d9782ac8319b615c3859a"
+            "200759525527c1eab701da32"
           ],
           "restriction": {
             "type": "full"
@@ -906,14 +906,14 @@
         },
         {
           "selection": {
-            "graph_version": "2026-07-31-portland-vancouver-v1",
+            "graph_version": "2026-08-08-portland-vancouver-frozen-v2",
             "road_name": "I-5 southbound mainline: I-84 split to Steel Bridge",
             "distance_m": 1.3,
-            "selected_edge_id": "7bcfb485d0e76397eceed4c9",
+            "selected_edge_id": "1257e20a863243672d416039",
             "directions": [
               {
                 "edge": {
-                  "edge_id": "7bcfb485d0e76397eceed4c9",
+                  "edge_id": "1257e20a863243672d416039",
                   "u": "3427976322",
                   "v": "256180952",
                   "key": 0,
@@ -961,7 +961,7 @@
             ]
           },
           "selected_edge_ids": [
-            "7bcfb485d0e76397eceed4c9"
+            "1257e20a863243672d416039"
           ],
           "restriction": {
             "type": "full"
@@ -970,14 +970,14 @@
         },
         {
           "selection": {
-            "graph_version": "2026-07-31-portland-vancouver-v1",
+            "graph_version": "2026-08-08-portland-vancouver-frozen-v2",
             "road_name": "I-5 southbound mainline: Steel Bridge to I-84 westbound merge",
             "distance_m": 0.1,
-            "selected_edge_id": "e35d9119a7759e899f81e129",
+            "selected_edge_id": "2c85e9317ca35fed48de1f1b",
             "directions": [
               {
                 "edge": {
-                  "edge_id": "e35d9119a7759e899f81e129",
+                  "edge_id": "2c85e9317ca35fed48de1f1b",
                   "u": "256180952",
                   "v": "40405173",
                   "key": 0,
@@ -1034,7 +1034,7 @@
             ]
           },
           "selected_edge_ids": [
-            "e35d9119a7759e899f81e129"
+            "2c85e9317ca35fed48de1f1b"
           ],
           "restriction": {
             "type": "full"
@@ -1043,14 +1043,14 @@
         },
         {
           "selection": {
-            "graph_version": "2026-07-31-portland-vancouver-v1",
+            "graph_version": "2026-08-08-portland-vancouver-frozen-v2",
             "road_name": "I-405 northbound/Fremont Bridge ramp to I-5 southbound",
             "distance_m": 0.6,
-            "selected_edge_id": "f75519ed8a453d02c289b56b",
+            "selected_edge_id": "7eb162577e54d64c84c65622",
             "directions": [
               {
                 "edge": {
-                  "edge_id": "f75519ed8a453d02c289b56b",
+                  "edge_id": "7eb162577e54d64c84c65622",
                   "u": "256989277",
                   "v": "40382443",
                   "key": 0,
@@ -1206,7 +1206,7 @@
             ]
           },
           "selected_edge_ids": [
-            "f75519ed8a453d02c289b56b"
+            "7eb162577e54d64c84c65622"
           ],
           "restriction": {
             "type": "full"

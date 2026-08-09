@@ -69,12 +69,12 @@ Daily use must not require Docker, a cloud database, manually starting two serve
 
 ### Deferred unless the core product is stable early
 
-- Full SUMO microscopic traffic simulation.
 - Public internet hosting.
 - User accounts.
 - Google Docs-style simultaneous scenario editing.
 - Paid historical traffic providers.
 - Native iOS or Android applications.
+- Evidence-based incident generation beyond the validated closure model.
 
 ## 3. Success criteria
 
@@ -139,6 +139,23 @@ data/app.db
 ```
 
 Use SQLite WAL mode and short transactions so multiple teammates can read scenarios concurrently. IndexedDB may preserve unsaved drafts and frontend preferences, but it must not replace SQLite for shared scenarios.
+
+### Physical traffic simulation layer
+
+Commute Help uses a dual-engine architecture. OSMnx and NetworkX remain the fast
+planning, map-selection, candidate-route, and fallback engines. SUMO is an active
+local physical-simulation subsystem for regional mesoscopic traffic assignment
+and scenario-generated microscopic closure areas.
+
+SUMO runs only in separate local worker processes. The regional closure run
+precedes affected-area generation, and microscopic boundary demand preserves
+entry-to-exit trip intent. Final physical recommendations use composed scenario
+costs rather than silently returning free-flow preview costs.
+
+No SUMO result becomes a calibrated product result merely because the simulator
+ran successfully. Model bundles must pass the versioning, free-flow, demand,
+baseline, closure, holdout, and evidence gates in
+`COMMUTE_HELP_SUMO_TRAFFIC_SIMULATION_PLAN.md`.
 
 ### Road-network artifacts
 

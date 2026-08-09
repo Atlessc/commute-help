@@ -36,6 +36,8 @@ class GraphManifest(BaseModel):
     schema_version: Literal[1]
     graph_version: str
     source: str
+    osm_source_version: str | None = None
+    osm_source_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     built_at: str
     region: GraphRegion
     network_type: Literal["drive"]
