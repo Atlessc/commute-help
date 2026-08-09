@@ -1262,9 +1262,14 @@ sumo_max_calibration_experiments: int = 100
 
 sumo_max_area_expansions: int = 3
 sumo_max_detailed_edges: int = 50_000
+sumo_max_coupling_iterations: int = 3
 
 sumo_default_warmup_minutes: int = 45
 sumo_default_analysis_minutes: int = 90
+sumo_default_ensemble_runs: int = 12
+sumo_max_ensemble_runs: int = 50
+
+sumo_micro_real_vehicles_per_sim_vehicle: float = 1.0
 
 sumo_playback_max_visible_vehicles: int = 900
 ```
@@ -1986,6 +1991,29 @@ connector version
 
 # 16. Count calibration
 
+Before comparing counts, normalize detector semantics explicitly.
+
+PORTAL observations may represent individual lane detectors while SUMO output
+may be lane, edge, or station aggregate output. The calibration adapter must
+record:
+
+```text
+detector ID
+station ID
+lane number
+direction
+aggregation level
+source interval
+source volume unit
+normalized vehicles/hour
+SUMO comparison edge/lane set
+```
+
+Never sum lane rates and station totals together, never treat a 15-minute count
+as vehicles/hour without the documented conversion, and never compare one lane
+against an all-lane SUMO edge. Quality reports must expose missing or duplicate
+lane coverage.
+
 For each period or bucket:
 
 1. load OD prior;
@@ -2132,7 +2160,7 @@ Hash:
 SUMO version
 SUMO network version
 demand version
-signal version
+traffic-control version
 traffic schedule version
 parameter set
 scenario/closure schedule
@@ -2508,7 +2536,7 @@ Therefore a baseline checkpoint manifest must bind:
 SUMO version
 network version
 demand version
-signal version
+traffic-control version
 parameter version
 random state policy
 platform metadata if RNG state compatibility matters
@@ -3151,6 +3179,8 @@ Every simulation directory should contain a manifest similar to:
   "sumoVersion": "1.27.1",
   "runtimeMode": "libsumo",
 
+  "osmSourceVersion": "...",
+  "osmSourceSha256": "...",
   "graphVersion": "...",
   "sumoNetworkVersion": "...",
   "demandVersion": "...",
@@ -3177,6 +3207,15 @@ Every simulation directory should contain a manifest similar to:
   "closureIds": [],
   "closureStateMode": "established",
   "affectedAreaGeneration": 1,
+
+  "coupling": {
+    "normalRegionalRunId": "...",
+    "closureRegionalRunId": "...",
+    "microRunIds": [],
+    "iteration": 1,
+    "converged": true,
+    "remainingDelta": 0.0
+  },
 
   "planning": {
     "mode": "depart_at",
@@ -3224,6 +3263,8 @@ Manifest:
   "modelVersion": "pv-2026-09-v1",
 
   "sumoVersion": "1.27.1",
+  "osmSourceVersion": "...",
+  "osmSourceSha256": "...",
   "graphVersion": "...",
   "sumoNetworkVersion": "...",
   "demandVersion": "...",
@@ -3233,6 +3274,7 @@ Manifest:
   "driverDistributionVersion": "...",
 
   "evidenceLevel": "historically_calibrated",
+  "redistributionClass": "local_only",
 
   "validation": {
     "passed": true,
@@ -3242,6 +3284,7 @@ Manifest:
   },
 
   "sources": [],
+  "componentRedistribution": [],
   "checksums": {}
 }
 ```
@@ -3651,13 +3694,13 @@ That is far better than implying "SUMO" automatically means "accurate."
 
 ---
 
-# 51. Phase plan
+# 51. SUMO subsystem phase plan
 
 The safest implementation is staged so each phase has an acceptance gate.
 
 ---
 
-## Phase 0 - Contract and environment
+## SUMO Phase 0 - Contract and environment
 
 ### Goal
 
@@ -3703,7 +3746,7 @@ No Portland simulation yet.
 
 ---
 
-## Phase 1 - Frozen OSM source, dual-network rebuild, and edge mapping
+## SUMO Phase 1 - Frozen OSM source, dual-network rebuild, and edge mapping
 
 ### Goal
 
@@ -3744,7 +3787,7 @@ Do not continue to regional calibration until this passes.
 
 ---
 
-## Phase 2 - Deterministic worker and one toy physical run
+## SUMO Phase 2 - Deterministic worker and one toy physical run
 
 ### Goal
 
@@ -3778,7 +3821,7 @@ Tiny synthetic run:
 
 ---
 
-## Phase 3 - 24/7 traffic schedule
+## SUMO Phase 3 - 24/7 traffic schedule
 
 ### Goal
 
@@ -3810,7 +3853,7 @@ modeled fallback states until weekend observations pass their own data gate.
 
 ---
 
-## Phase 4 - Benchmark trip system and free-flow floor
+## SUMO Phase 4 - Benchmark trip system and free-flow floor
 
 ### Goal
 
@@ -3836,7 +3879,7 @@ departure-time search on a deterministic fixture.
 
 ---
 
-## Phase 5 - Real regional OD demand to SUMO
+## SUMO Phase 5 - Real regional OD demand to SUMO
 
 ### Goal
 
@@ -3868,7 +3911,7 @@ demand manifest
 
 ---
 
-## Phase 6 - Regional mesoscopic baseline
+## SUMO Phase 6 - Regional mesoscopic baseline
 
 ### Goal
 
@@ -3897,7 +3940,7 @@ baseline checkpoint generation
 
 ---
 
-## Phase 7 - Calibration scoring and optimizer
+## SUMO Phase 7 - Calibration scoring and optimizer
 
 ### Goal
 
@@ -3925,7 +3968,7 @@ parameter-space config
 
 ---
 
-## Phase 8 - Freeze first no-closure model bundle
+## SUMO Phase 8 - Freeze first no-closure model bundle
 
 ### Goal
 
@@ -3947,7 +3990,7 @@ Only now should the UI be allowed to call it a calibrated model.
 
 ---
 
-## Phase 9 - Generic regional closure simulation
+## SUMO Phase 9 - Generic regional closure simulation
 
 ### Goal
 
@@ -3986,7 +4029,7 @@ mid-run activation and reopening
 
 ---
 
-## Phase 10 - Generic microscopic affected area and coupling
+## SUMO Phase 10 - Generic microscopic affected area and coupling
 
 ### Goal
 
@@ -4021,7 +4064,7 @@ bounded route/cost convergence loop
 
 ---
 
-## Phase 11 - Reactive routing and bounded heterogeneity
+## SUMO Phase 11 - Reactive routing and bounded heterogeneity
 
 ### Goal
 
@@ -4049,7 +4092,7 @@ small validated vehicle-class distributions
 
 ---
 
-## Phase 12 - Closure-event calibration and ensemble reliability
+## SUMO Phase 12 - Closure-event calibration and ensemble reliability
 
 ### Goal
 
@@ -4087,7 +4130,7 @@ trip-time effects
 
 ---
 
-## Phase 13 - Freeze closure-capable model and open final disruption test
+## SUMO Phase 13 - Freeze closure-capable model and open final disruption test
 
 ### Goal
 
@@ -4114,7 +4157,7 @@ redistribution classification report
 
 ---
 
-## Phase 14 - SUMO playback integration
+## SUMO Phase 14 - SUMO playback integration
 
 ### Goal
 
@@ -4144,7 +4187,7 @@ MapLibre playback source
 
 ---
 
-## Phase 15 - Incident generation, optional
+## SUMO Phase 15 - Incident generation, optional
 
 Only after incident rates can be expressed using defensible local evidence such as:
 
@@ -4174,7 +4217,7 @@ That invites architecture confetti.
 Use this first task instead:
 
 ```text
-Implement Phase 0 and the smallest part of Phase 2 needed to prove a local SUMO runtime.
+Implement SUMO Phase 0 and the smallest part of SUMO Phase 2 needed to prove a local SUMO runtime.
 
 Requirements:
 
@@ -4212,7 +4255,7 @@ That creates a clean foundation.
 
 # 53. Second coding slice
 
-After Phase 0 passes:
+After SUMO Phase 0 passes:
 
 ```text
 Implement the SUMO network build and app-edge/SUMO-edge mapping pipeline.
@@ -4220,7 +4263,10 @@ Implement the SUMO network build and app-edge/SUMO-edge mapping pipeline.
 Do not implement demand calibration yet.
 
 Requirements:
-- build from the same approved local OSM source lineage;
+- freeze one approved local OSM extract and record its checksum/license;
+- rebuild the app graph and SUMO network from that exact extract;
+- migrate/rematch saved scenarios and graph-derived traffic artifacts through
+  explicit accepted/review/failed reports;
 - use netconvert;
 - preserve original OSM identifiers;
 - generate versioned network manifest;
@@ -4264,6 +4310,7 @@ This keeps debugging dimensions small.
 Do not:
 
 - replace NetworkX with SUMO;
+- pair the current Overpass-built graph with a differently dated SUMO network;
 - run SUMO inside a FastAPI request;
 - make the UI wait synchronously for a long simulation HTTP request;
 - hardcode the Interstate Bridge;
@@ -4282,6 +4329,15 @@ Do not:
 - download datasets when `npm run dev` starts;
 - create an unbounded number of parallel SUMO processes;
 - generate detailed per-vehicle output for the entire region by default;
+- feed normal-day boundary totals into a microscopic closure run without
+  scenario entry-to-exit intent;
+- treat an established closure as a mid-run activation;
+- use reduced microscopic vehicle demand without validated physical
+  equivalence;
+- calculate percentiles or on-time probability from one deterministic seed;
+- tune reactive-routing behavior against the final disruption test;
+- return a free-flow/preview route as the final result after physical
+  simulation completed;
 - expose private benchmark addresses;
 - publish restricted agency raw data;
 - silently load a model built for a different road graph;
@@ -4303,10 +4359,14 @@ The physical simulation subsystem is mature when all of the following are true.
 
 ## Network
 
-- app graph and SUMO network share source provenance.
+- app graph and SUMO network reference the same frozen OSM source checksum.
+- saved scenarios and graph-derived traffic artifacts pass migration/rematch
+  review after the dual-network rebuild.
 - closure edge mapping is versioned and reviewed.
 - directional closure mapping is correct.
 - critical intersections/ramps are validated.
+- traffic-control inventory distinguishes directional stop, yield, signal, and
+  inferred controls.
 
 ## Demand
 
@@ -4327,10 +4387,16 @@ The physical simulation subsystem is mature when all of the following are true.
 ## Closure simulation
 
 - arbitrary closures can generate affected areas.
+- the regional closure run precedes affected-area generation.
+- boundary demand preserves entry-to-exit trip intent and time.
 - microscopic simulation is not hardcoded to one corridor.
 - boundary spillover can trigger bounded expansion.
+- regional/micro coupling convergence is measured and non-convergence is
+  disclosed.
 - closed edges are never traversed after activation.
 - lane reductions and directional closures behave correctly.
+- established, activating, scheduled, and reopening closure behavior is tested.
+- reactive traffic-aware rerouting is validated before closure-capable freeze.
 
 ## Performance
 
@@ -4347,7 +4413,11 @@ The physical simulation subsystem is mature when all of the following are true.
 - playback can use real SUMO sampled vehicles.
 - selected trip is visible.
 - scale/weight is disclosed.
+- simulation scale and display sampling are disclosed separately.
 - evidence level and model version are visible.
+- depart-at and arrive-by are both supported by the physical model.
+- reliability metrics come from an ensemble, while playback identifies its one
+  representative seed.
 
 ## Reproducibility
 
@@ -4359,12 +4429,22 @@ model bundle
 SUMO version
 network version
 demand version
-signal version
+traffic-control version
 traffic schedule
 parameter set
 seed
 input checksums
 ```
+
+## Licensing and privacy
+
+- code and synthetic fixtures may be open source;
+- raw real-world data, private benchmarks, and restricted derived artifacts
+  remain local;
+- every model component has a redistribution classification;
+- public export fails closed for private, restricted, or unknown dependencies;
+- no full private address is written to normal logs, manifests, or public
+  artifacts.
 
 ---
 
@@ -4538,21 +4618,43 @@ NetworkX structural route
 fast diversion preview
         |
         v
-regional mesoscopic physical simulation
+normal and closure regional mesoscopic simulation
         |
         v
-detailed microscopic closure simulation
+scenario-coupled microscopic closure simulation
+        |
+        v
+reactive routing and uncertainty ensemble
         |
         v
 calibrated model
         |
         v
-held-out validated model
+untouched holdout validated model
 ```
 
 Each step may add realism.
 
 None may silently claim more evidence than it has.
+
+The authoritative physical run lifecycle is:
+
+```text
+user scenario
+  -> fast NetworkX preview
+  -> resolve time, closure state, and model bundle
+  -> normal regional state
+  -> closure regional mesoscopic run
+  -> regional delta and affected-area discovery
+  -> scenario entry-to-exit boundary demand
+  -> one-to-one microscopic run
+  -> bounded boundary expansion
+  -> composed scenario costs
+  -> route/corridor convergence loop
+  -> bounded uncertainty ensemble
+  -> percentiles and on-time probability
+  -> one representative seeded playback run
+```
 
 The goal is not "make SUMO produce traffic-looking dots."
 
