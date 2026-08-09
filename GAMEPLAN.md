@@ -905,6 +905,44 @@ speeds, closure flow conserves demand within disclosed tolerances, downstream
 congestion propagates over time, and the recommended trip route uses the final
 scenario edge costs rather than free-flow costs.
 
+### Phase 10 — Agent playback and map-first simulation workspace
+
+Turn authoritative simulation frames into a readable, pauseable map experience.
+The backend owns route choice, traffic state, incidents, and frame targets. The
+browser may interpolate positions and values between adjacent frames, but it
+must never invent a route decision, collision, illegal movement, or traffic
+count merely to make playback look smoother.
+
+Deliverables:
+
+- map-dominant desktop and tablet layout with expandable Trip, Closures,
+  Conditions, and Simulation modules;
+- bounded vehicle-agent samples that remain on directed road geometries;
+- stable seeded behavior traits including map-provider use, reaction delay,
+  patience, route inertia, risk tolerance, and compliance;
+- explicit probability units for rare violations and incidents, with incident
+  rates derived from documented source data when available;
+- time-indexed target frames with browser tweening between frames;
+- a distinct selected-trip agent with a permanent blue traveled path and a
+  lighter projected path that may change after a modeled reroute;
+- pause, resume, restart, timeline scrubbing, follow-trip mode, and continuous
+  1x through 50x playback speed;
+- causal events explaining closure activation, queue growth, route-choice
+  response, spillover, incidents, and selected-trip reroutes;
+- deterministic seeded replay and scenario-versioned simulation settings; and
+- reduced-motion behavior that preserves timeline control without forcing
+  moving dots.
+
+Playback begins paused after the model finishes. "Simulation computed" and
+"playback running" are separate states. Computing always runs as quickly as the
+host permits; playback speed changes only visualization time.
+
+Gate: a deterministic fixture shows agents staying on road geometry, closure
+traffic shifting onto legal alternatives over time, a selected trip preserving
+its traveled-path history after a reroute, and identical inputs reproducing the
+same frames and causal events. Browser QA must verify pause, resume, restart,
+scrubbing, speed changes, expandable modules, and reduced-motion behavior.
+
 ## 17. Weekend target
 
 Aim to finish Phases 0–5 during the first weekend:

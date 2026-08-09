@@ -28,3 +28,6 @@ data/exports/
 data/backups/
 
 AGENTS.md
+/tmp
+/tmp/pdfs
+/output

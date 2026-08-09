@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "campaign_id": "synthetic-regional-od-v1",
+  "agency": "synthetic_fixture",
+  "received_at": "2026-08-08T00:00:00Z",
+  "model": {
+    "name": "Synthetic Portland-Vancouver OD fixture",
+    "version": "fixture-v1",
+    "base_year": 2025,
+    "network_year": 2025
+  },
+  "files": {
+    "od_table": {
+      "path": "od.csv",
+      "format": "csv",
+      "bytes": 176,
+      "sha256": "5ec89a86045d0a768ec0371a47cfe5d4d25f53c443dcbd1be1ca89607e16244d"
+    },
+    "zones": {
+      "path": "zones.geojson",
+      "format": "geojson",
+      "bytes": 926,
+      "sha256": "c3d23b33a9fada731b936bd3a5d9676a8ba67fe25849eecc11373797fd24b739"
+    }
+  },
+  "column_mapping": {
+    "origin_zone_id": "origin",
+    "destination_zone_id": "destination",
+    "period": "period",
+    "trip_value": "trips",
+    "vehicle_class": "vehicle_class"
+  },
+  "zone_column_mapping": {
+    "zone_id": "zone_id",
+    "zone_type": "zone_type"
+  },
+  "period_aliases": {
+    "AM": "weekday_morning",
+    "PM": "weekday_afternoon"
+  },
+  "units": {
+    "trip_measure": "vehicle_trips",
+    "value_basis": "period_total",
+    "period_duration_minutes": {
+      "weekday_morning": 120,
+      "weekday_afternoon": 180
+    }
+  },
+  "boundary_overlap": {
+    "status": "documented",
+    "reference": "Synthetic fixture contains no overlapping agency demand."
+  },
+  "license": {
+    "terms_reference": "Synthetic test fixture created by Web54 LLC for Commute Help.",
+    "internal_model_use_authorized": true,
+    "source_data_redistribution": "allowed",
+    "open_source_code_publication": "allowed",
+    "derived_output_publication": "allowed",
+    "attribution": "Synthetic Commute Help fixture"
+  }
+}
