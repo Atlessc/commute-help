@@ -195,12 +195,13 @@ terms, orphan zones, unknown bi-state overlap, and checksum tampering.
 
 ## What still happens after a passing intake
 
-Do not register this artifact as a selectable background profile. The next
-gates are:
+Do not register this artifact as a selectable background profile. The Phase 5
+connector and SUMO-demand machinery is now available, but the real delivery must
+still pass these gates:
 
-1. review zone-to-road connectors;
-2. reconcile Metro and RTC overlap and external gateways;
-3. assign normal-network demand;
+1. reconcile Metro and RTC overlap and external gateways in the intake record;
+2. build and review zone-to-road connectors and the demand manifest;
+3. route normal-network demand with `npm run sumo:build-demand`;
 4. evaluate held-out PORTAL count and speed error;
 5. verify demand and node-flow conservation; and
 6. disclose coverage, error, evidence level, and publication restrictions.

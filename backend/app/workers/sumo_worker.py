@@ -7,10 +7,9 @@ import json
 import os
 import subprocess
 import time
+import traceback
 from pathlib import Path
 from xml.sax.saxutils import quoteattr
-
-import libsumo
 
 from backend.app.services.sumo.output_service import parse_tripinfo
 
@@ -31,6 +30,11 @@ def _inside(child: Path, parent: Path) -> bool:
 
 def run(request_path: Path) -> int:
     request = json.loads(request_path.read_text(encoding="utf-8"))
+    if request.get("run_kind") == "regional_comparison":
+        from backend.app.workers.regional_sumo_worker import run_regional
+
+        return run_regional(request_path, request)
+    import libsumo
     run_dir = request_path.parent.resolve()
     fixture_dir = Path(request["fixture_dir"]).resolve()
     if not _inside(fixture_dir, Path.cwd()) or not _inside(run_dir, Path.cwd()):
@@ -145,7 +149,27 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--request", type=Path, required=True)
     args = parser.parse_args()
-    return run(args.request.resolve())
+    try:
+        return run(args.request.resolve())
+    except Exception as error:
+        traceback.print_exc()
+        request_path = args.request.resolve()
+        message = "The local SUMO worker could not complete this run."
+        detail = str(error)
+        if any(
+            marker in detail
+            for marker in (
+                "unaccepted edge mappings",
+                "physical free-flow floor",
+                "could not route the selected trip",
+            )
+        ):
+            message = detail
+        _atomic_json(
+            request_path.parent / "result.json",
+            {"status": "failed", "error": message},
+        )
+        return 1
 
 
 if __name__ == "__main__":

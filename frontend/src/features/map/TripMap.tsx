@@ -20,6 +20,7 @@ import type {
 import type { SelectionMode } from '../../stores/tripStore'
 import type { ScenarioMapState } from '../../api/scenarios'
 import type { DiversionEdgeChange } from '../../api/diversion'
+import type { PhysicalEdgeChange } from '../../api/simulation'
 import type { SimulationMapFrame } from '../simulation/simulationPlayback'
 import './TripMap.css'
 
@@ -57,7 +58,7 @@ type TripMapProps = {
   route: RouteSummary | null
   scenarioRoute: RouteSummary | null
   closureDirections: ClosureMapDirection[]
-  spilloverEdges: DiversionEdgeChange[]
+  spilloverEdges: Array<DiversionEdgeChange | PhysicalEdgeChange>
   simulationFrame: SimulationMapFrame | null
   simulationPlaying: boolean
   selectionMode: SelectionMode
@@ -632,15 +633,15 @@ function closureFeature(directions: ClosureMapDirection[]) {
   }
 }
 
-function spilloverFeature(edges: DiversionEdgeChange[]) {
+function spilloverFeature(edges: Array<DiversionEdgeChange | PhysicalEdgeChange>) {
   return {
     type: 'FeatureCollection' as const,
     features: edges.map((edge) => ({
       type: 'Feature' as const,
       properties: {
-        edgeId: edge.edge_id,
+        edgeId: 'edge_id' in edge ? edge.edge_id : edge.sumo_edge_id,
         roadName: edge.road_name,
-        changeVph: edge.change_vph,
+        changeVph: 'change_vph' in edge ? edge.change_vph : edge.change_mean_active_vehicles,
       },
       geometry: edge.geometry,
     })),
@@ -711,7 +712,7 @@ function syncClosureSource(
 
 function syncSpilloverSource(
   map: MapLibreMap,
-  edges: DiversionEdgeChange[],
+  edges: Array<DiversionEdgeChange | PhysicalEdgeChange>,
 ): boolean {
   const source = map.getSource('spillover-edges') as GeoJSONSource | undefined
   if (!source) return false

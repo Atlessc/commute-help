@@ -9,10 +9,18 @@
 - [x] SUMO Phase 2 — isolated deterministic worker, SQLite run records, progress,
   create/read/cancel API, TripInfo parsing, closure reroute proof, reproducibility,
   cancellation, and orphan-process check using the tiny committed fixture.
-- [ ] SUMO Phase 3 — build and validate the default 24/7 traffic schedule.
+- [x] SUMO Phase 3 — bounded-memory 24/7 PORTAL schedule, all-minute smooth
+  interpolation, weekday evidence separation, explicit unobserved-weekend
+  fallback, checksum manifest, validation report, and active schedule.
+- [x] SUMO Phase 4 — private-safe benchmark trips, atomic import/export, hard
+  free-flow validation, and deterministic depart-at/arrive-by contracts.
+- [x] SUMO Phase 5 — immediately usable local 24/7 proxy OD compiled from the
+  existing detector-fitted paths and PORTAL schedule, plus a separate optional
+  agency-OD intake path for future Metro/RTC upgrades.
 
-The active physical network is still **uncalibrated**. Completing Phases 0–2
-proves the runtime and orchestration, not Portland traffic accuracy.
+The active physical network is still **uncalibrated**. Completing Phases 0–5
+proves the runtime, orchestration, and background scheduler, not Portland traffic
+accuracy.
 
 > Repository: `Atlessc/commute-help`  
 > Reviewed branch: `master`  
@@ -1452,25 +1460,39 @@ ON calibration_experiments(campaign_id);
 CREATE TABLE IF NOT EXISTS benchmark_trips (
     id TEXT PRIMARY KEY,
 
+    graph_version TEXT NOT NULL,
+
     departure_time TEXT NOT NULL,
-    day_type TEXT NOT NULL,
+    day_type TEXT NOT NULL CHECK (day_type IN (
+        'mon_thu', 'friday', 'saturday', 'sunday'
+    )),
 
     origin_node TEXT,
     destination_node TEXT,
     origin_zone TEXT,
     destination_zone TEXT,
 
-    corridor_label TEXT,
+    corridor_label TEXT NOT NULL,
 
-    actual_travel_seconds REAL NOT NULL,
+    actual_travel_seconds REAL NOT NULL CHECK (actual_travel_seconds > 0),
+    reported_no_traffic_seconds REAL CHECK (reported_no_traffic_seconds > 0),
 
-    incident_flag INTEGER,
+    incident_flag INTEGER NOT NULL DEFAULT 0 CHECK (incident_flag IN (0, 1)),
     weather_category TEXT,
 
-    checkpoints_json TEXT,
+    checkpoints_json TEXT NOT NULL DEFAULT '[]',
     notes TEXT,
 
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+
+    CHECK (
+        (origin_node IS NOT NULL AND destination_node IS NOT NULL
+         AND origin_zone IS NULL AND destination_zone IS NULL)
+        OR
+        (origin_node IS NULL AND destination_node IS NULL
+         AND origin_zone IS NOT NULL AND destination_zone IS NOT NULL)
+    )
 );
 ```
 
@@ -2431,6 +2453,7 @@ origin graph node or zone
 destination graph node or zone
 corridor label
 actual travel seconds
+optional independently reported no-traffic seconds
 incident flag
 weather category if known
 optional checkpoint times
@@ -3891,17 +3914,39 @@ No simulated trip beats the configured physical free-flow floor.
 Both `depart_at` and `arrive_by` contracts validate, including an arrive-by
 departure-time search on a deterministic fixture.
 
+### Implemented evidence — 2026-08-08
+
+- SQLite application schema 3 owns graph-versioned benchmark records.
+- Import/export rejects address and coordinate fields, validates the complete
+  payload before writing, and commits the whole import in one transaction.
+- Private exports and validation reports remain below the ignored
+  `data/benchmarks/private/` tree.
+- A local seed benchmark records the reported 40-minute weekday-PM trip and
+  independent 22-minute no-traffic comparison using graph-node identities only.
+- The active graph computes a 1,239.752-second physical free-flow route. With
+  the explicit 3% tolerance, the minimum accepted time is 1,202.559 seconds;
+  both local timing observations pass without weakening that floor.
+- The focused deterministic gate rejects an impossible 80-second result
+  against a 100-second fixture floor and validates both time-planning modes,
+  including arrive-by binary search across a time-dependent travel-time change.
+- Phase 4 focused result: `8 passed`; the only output is the existing Starlette
+  `httpx` deprecation warning.
+
 ---
 
-## SUMO Phase 5 - Real regional OD demand to SUMO
+## SUMO Phase 5 - Local proxy and optional agency OD demand to SUMO
 
 ### Goal
 
-Use accepted Metro/RTC OD delivery.
+Produce regional SUMO demand now from existing local evidence. Accept a future
+Metro/RTC delivery as an accuracy upgrade without changing the downstream
+simulation contract.
 
 ### Dependency
 
-The regional OD intake gate must pass.
+The local path requires the active graph, detector-fitted proxy OD seed, 24/7
+traffic schedule, and SUMO edge map. The separate agency path requires the
+regional OD intake gate to pass.
 
 ### Add
 
@@ -3915,13 +3960,56 @@ demand manifest
 
 ### Acceptance gate
 
-- all OD zone IDs resolve;
+- all selected local proxy or agency OD zone IDs resolve;
 - boundary/gateway behavior is documented;
 - generated vehicles conserve accepted OD demand after sampling scale;
 - every sampled/scaled regional run records its scale and passes its approved
   demand/capacity equivalence gate;
 - demand does not silently originate in invalid streets;
-- bi-state overlap is resolved.
+- local proxy output explicitly reports its missing external-gateway evidence;
+- agency-backed output requires resolved bi-state overlap.
+
+### Implemented pipeline evidence — 2026-08-08
+
+- `sumo/demand_service.py` accepts either normalized agency Parquet whose
+  `assignment_ready` gate is true or a local proxy snapshot whose
+  `simulation_ready` gate is true. The evidence levels remain distinct.
+- Zone connectors are built from accepted, direction-preserving app-to-SUMO edge
+  mappings with a projected spatial index. Internal zones prefer nonlocal
+  arterials; external/gateway zones prefer freeway, trunk, and primary edges.
+- Connector records retain zone type, origin/destination role, directed SUMO and
+  app edge IDs, class eligibility, distance, normalized selection weight,
+  gateway status, and the automatic-selection reason for human review.
+- Unknown vehicle classes are blocked until a reviewed SUMO class mapping is
+  added. Current explicit mappings cover passenger/SOV, HOV, delivery/light
+  truck, heavy truck, and bus inputs.
+- OD rows use seeded balanced stochastic rounding and seeded connector/departure choices.
+  Every run records the real-vehicles-per-simulated-vehicle scale, per-row error,
+  aggregate represented demand, and the declared conservation rule.
+- `duarouter` resolves and validates every sampled trip on the active regional
+  network. Routed output is rejected for missing vehicles, empty routes, or
+  endpoints outside the selected connector set.
+- SUMO's generated timestamp and local absolute command paths are stripped before
+  deterministic gzip packaging, preventing workstation paths from entering the
+  route artifact.
+- The committed invented fixture passed the complete active-network path:
+  3/3 zones resolved, 24 directed connector records, one external gateway zone,
+  2,850 accepted AM vehicle trips represented by 57 routed SUMO vehicles at a
+  disclosed 50:1 scale, zero conservation error, and 57/57 valid routes.
+- Focused Phase 5 result: `11 passed` across intake, connector, class, privacy,
+  deterministic sampling, and conservation behavior.
+
+The actual all-local gate also passed on the active regional network for Tuesday,
+September 15, 2026 at 07:00 Pacific: 80 zones, 5,706 OD pairs, 81,121.820 modeled
+vehicle trips, 1,622 SUMO vehicles at 50:1 scale, 21.820 trips of aggregate
+rounding error, and 1,622/1,622 valid routes. The active readiness API reports
+`regional-proxy-od-ipf-v1` as available whenever its graph-bound seed, active
+schedule, and SUMO network are present.
+
+This is now usable as the **modeled_uncalibrated local baseline input** for the
+next physical-run phase. It is not historical regional OD truth. Metro/RTC data,
+explicit external gateways, land-use productions/attractions, and stronger
+neighborhood validation remain accuracy upgrades rather than launch blockers.
 
 ---
 
@@ -3951,6 +4039,21 @@ baseline checkpoint generation
 - conservation checks pass.
 - boundary output preserves entry edge, exit edge or destination zone, time
   bucket, vehicle class, and route-choice group.
+
+### Implemented vertical slice — 2026-08-09
+
+- The regional worker now compiles arbitrary-time local proxy demand, runs the
+  active Portland–Vancouver network in mesoscopic mode, and records bounded
+  selected-trip, vehicle-count, speed, arrival, and teleport outputs.
+- Deterministic demand packages are checksum-verified and cached. Baseline and
+  closure variants reuse the same package, seed, physical scale, and time
+  window.
+- A bounded 5-minute, 100:1 pipeline smoke completed both variants with 69
+  inserted vehicles per variant, zero teleports, 20 playback frames, and at
+  most 68 visible vehicles. Its short window and sparse scale are pipeline
+  evidence only, not the Phase 6 accuracy gate.
+- Full 1:1 representative baseline checkpoints, corridor coverage, boundary OD,
+  and conservation validation remain open; Phase 6 is not frozen.
 
 ---
 
@@ -4040,6 +4143,19 @@ mid-run activation and reopening
   discovery;
 - no hardcoded I-5 assumptions exist; and
 - always-active closures are active throughout their warm-up.
+
+### Implemented vertical slice — 2026-08-09
+
+- The API accepts arbitrary directed app edge IDs with full, remaining-lane,
+  speed, always-active, or scheduled restrictions. The worker refuses any app
+  edge whose active SUMO mapping is not wholly accepted.
+- Established restrictions apply before warm-up traffic progresses. Scheduled
+  restrictions activate and restore during the run, and active vehicles receive
+  travel-time rerouting after every restriction-state change.
+- Normal and closure variants produce selected-trip deltas and bounded changed
+  road occupancy/speed geometry without any I-5-specific worker logic.
+- The complete freeway, arterial, ramp, reopening, lane-reduction, and multiple
+  simultaneous closure acceptance matrix remains open.
 
 ---
 
@@ -4198,6 +4314,20 @@ MapLibre playback source
 - legend separately states real-demand scale, SUMO scale, and display sampling;
 - the playback seed and representative-run policy are visible; and
 - percentile/reliability results are never inferred from the one playback run.
+
+### Implemented vertical slice — 2026-08-09
+
+- Step 4 now creates and polls a physical regional comparison rather than using
+  browser-generated diversion dots. It exposes progress, cancellation, warm-up,
+  duration, seed, and explicit 1:1 versus preview scales.
+- The browser fetches a separate bounded playback artifact, tweens only between
+  authoritative frames, preserves the selected trip's blue traveled path, and
+  renders its current projected route separately.
+- Pause, restart, timeline scrubbing, and continuous 1x–50x playback reuse the
+  existing map-first controls. The evidence label, seed, physical scale, and
+  uncalibrated assumptions remain visible.
+- Follow-mode browser QA, reduced-motion QA, a completed representative selected
+  trip, and full 1:1 playback load remain open acceptance evidence.
 
 ---
 

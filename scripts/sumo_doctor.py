@@ -19,6 +19,10 @@ def main() -> None:
           f"{'available' if capabilities.libsumo_available else 'using subprocess fallback'}")
     print(f"[{'OK' if capabilities.network_ready else 'WARN'}] Network: "
           f"{'ready' if capabilities.network_ready else 'not built yet'}")
+    print(f"[{'OK' if capabilities.schedule_ready else 'WARN'}] 24/7 schedule: "
+          f"{capabilities.schedule_version or 'not active yet'}")
+    print(f"[{'OK' if capabilities.proxy_demand_ready else 'WARN'}] Local 24/7 proxy demand: "
+          f"{capabilities.proxy_demand_model_version or 'not ready yet'}")
     print(f"[{'OK' if capabilities.model_ready else 'WARN'}] Model bundle: "
           f"{'ready' if capabilities.model_ready else 'not frozen yet'}")
     for warning in capabilities.warnings:

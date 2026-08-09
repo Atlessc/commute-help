@@ -24,6 +24,7 @@ from backend.app.services.spatial_service import SpatialService
 from backend.app.services.sumo.environment import SumoEnvironmentService
 from backend.app.services.sumo.run_service import SimulationRunService
 from backend.app.services.traffic_service import TrafficService
+from backend.app.services.traffic_schedule_service import TrafficScheduleService
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -55,12 +56,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         traffic_service,
     )
     sumo_environment_service = SumoEnvironmentService(active_settings)
-    simulation_run_service = SimulationRunService(database, active_settings)
+    simulation_run_service = SimulationRunService(database, active_settings, graph_service)
+    traffic_schedule_service = TrafficScheduleService(
+        active_settings.traffic_schedule_path,
+        active_settings.traffic_schedule_manifest_path,
+    )
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         database.initialize()
         graph_service.load()
+        if active_settings.traffic_schedule_manifest_path.is_file():
+            traffic_schedule_service.load()
         application.state.database = database
         application.state.graph_service = graph_service
         application.state.spatial_service = spatial_service
@@ -71,6 +78,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         application.state.diversion_service = diversion_service
         application.state.sumo_environment_service = sumo_environment_service
         application.state.simulation_run_service = simulation_run_service
+        application.state.traffic_schedule_service = traffic_schedule_service
         application.state.settings = active_settings
         try:
             yield

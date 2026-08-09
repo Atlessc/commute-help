@@ -40,15 +40,14 @@ import { ReliabilityPanel } from './features/traffic/ReliabilityPanel'
 import type { ReliabilitySettings } from './api/traffic'
 import {
   DEFAULT_DIVERSION_SETTINGS,
-  type DiversionResult,
   type DiversionSettings,
 } from './api/diversion'
-import { DiversionPanel } from './features/diversion/DiversionPanel'
 import { SimulationPlayback } from './features/simulation/PlaybackControls'
 import {
-  buildSimulationSeeds,
-  simulationMapFrame,
+  physicalSimulationMapFrame,
 } from './features/simulation/simulationPlayback'
+import { PhysicalSimulationPanel } from './features/simulation/PhysicalSimulationPanel'
+import type { PhysicalSimulationPlayback, SimulationRunStatus } from './api/simulation'
 import { DraftRecovery, ScenarioPanel } from './features/scenarios/ScenarioPanel'
 import {
   clearPlannerDraft,
@@ -95,9 +94,10 @@ function App() {
   const [reliabilitySettings, setReliabilitySettings] = useState<ReliabilitySettings>(
     () => defaultReliabilitySettings(defaultDepartureTime()),
   )
-  const [diversionSnapshot, setDiversionSnapshot] = useState<{
+  const [physicalSimulationSnapshot, setPhysicalSimulationSnapshot] = useState<{
     comparisonKey: string
-    result: DiversionResult
+    status: SimulationRunStatus
+    playback: PhysicalSimulationPlayback
   } | null>(null)
   const [diversionSettings, setDiversionSettings] = useState<DiversionSettings>(
     DEFAULT_DIVERSION_SETTINGS,
@@ -642,7 +642,7 @@ function App() {
     ])
     if (!scenarioName.trim()) setScenarioName(preset.name)
     setSelectedAlternativeRouteId(null)
-    setDiversionSnapshot(null)
+    setPhysicalSimulationSnapshot(null)
     setSimulationElapsedSeconds(0)
     setSimulationPlaying(false)
     setOpenModule(2)
@@ -745,8 +745,16 @@ function App() {
   const alternatives = alternativesAreCurrent
     ? alternativesMutation.data.routes
     : []
+  const currentPhysicalSimulation =
+    physicalSimulationSnapshot?.comparisonKey === currentClosureKey
+      ? physicalSimulationSnapshot
+      : null
   const activeStep = currentScenario
     ? 5
+    : currentPhysicalSimulation
+      ? 4
+      : openModule === 4
+        ? 3
     : alternatives.length > 0
       ? 4
       : routeMutation.data
@@ -757,31 +765,20 @@ function App() {
   const selectedAlternative = alternatives.find(
     (candidate) => candidate.route.route_id === selectedAlternativeRouteId,
   )
-  const currentDiversionResult =
-    diversionSnapshot?.comparisonKey === currentClosureKey
-      ? diversionSnapshot.result
-      : null
-  const simulationSeeds = useMemo(
-    () => currentDiversionResult ? buildSimulationSeeds(currentDiversionResult) : [],
-    [currentDiversionResult],
-  )
   const simulationFrame = useMemo(
-    () => currentDiversionResult
-      ? simulationMapFrame(
-          simulationSeeds,
-          currentDiversionResult,
-          currentDiversionResult.recommended_route,
+    () => currentPhysicalSimulation?.status.summary
+      ? physicalSimulationMapFrame(
+          currentPhysicalSimulation.playback,
           simulationElapsedSeconds,
+          currentPhysicalSimulation.status.summary.scenario.selected_trip_rerouted,
         )
       : null,
     [
-      currentDiversionResult,
+      currentPhysicalSimulation,
       simulationElapsedSeconds,
-      simulationSeeds,
     ],
   )
   const selectedNavigationRoute =
-    currentDiversionResult?.recommended_route ??
     selectedAlternative?.route ??
     displayedResult?.scenario ??
     displayedResult?.baseline
@@ -812,7 +809,7 @@ function App() {
   })
 
   useEffect(() => {
-    if (!simulationPlaying || !currentDiversionResult) return
+    if (!simulationPlaying || !currentPhysicalSimulation) return
     let frameId = 0
     let previous = performance.now()
     const tick = (now: number) => {
@@ -820,9 +817,9 @@ function App() {
       previous = now
       setSimulationElapsedSeconds((current) => {
         const next = current + deltaSeconds * simulationSpeed
-        if (next >= 3600) {
+        if (next >= currentPhysicalSimulation.playback.duration_seconds) {
           setSimulationPlaying(false)
-          return 3600
+          return currentPhysicalSimulation.playback.duration_seconds
         }
         return next
       })
@@ -830,7 +827,7 @@ function App() {
     }
     frameId = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frameId)
-  }, [currentDiversionResult, simulationPlaying, simulationSpeed])
+  }, [currentPhysicalSimulation, simulationPlaying, simulationSpeed])
 
   const readinessNotice = system.error
     ? {
@@ -864,7 +861,7 @@ function App() {
           </span>
         </a>
 
-        {currentDiversionResult ? (
+        {currentPhysicalSimulation ? (
           <div className="simulation-header-summary" aria-live="polite">
             <i aria-hidden="true" />
             <span>
@@ -1040,7 +1037,7 @@ function App() {
           <WorkflowModule
             step={4}
             title="Simulation"
-            complete={Boolean(currentDiversionResult)}
+            complete={Boolean(currentPhysicalSimulation)}
             open={openModule === 4}
             disabled={!comparisonIsCurrent || !currentClosureComparison}
             onToggle={() => setOpenModule(openModule === 4 ? 0 : 4)}
@@ -1051,7 +1048,7 @@ function App() {
             origin &&
             destination ? (
               <>
-                {currentDiversionResult ? (
+                {currentPhysicalSimulation?.status.summary ? (
                   <div className="simulation-module-summary">
                     <article>
                       <small>Active scenario</small>
@@ -1066,35 +1063,33 @@ function App() {
                     <article className="simulation-module-summary__route">
                       <small>Current route</small>
                       <strong>
-                        {currentDiversionResult.recommended_route
-                          ? `${Math.round(currentDiversionResult.recommended_route.travel_time_seconds / 60)} min · ${(currentDiversionResult.recommended_route.distance_m / 1609.344).toFixed(1)} mi`
+                        {currentPhysicalSimulation.status.summary.scenario.selected_trip
+                          ? `${Math.round(currentPhysicalSimulation.status.summary.scenario.selected_trip.duration / 60)} min · ${(currentPhysicalSimulation.status.summary.scenario.selected_trip.route_length / 1609.344).toFixed(1)} mi`
                           : 'No route available'}
                       </strong>
-                      <span>{currentDiversionResult.recommended_route ? 'Traffic-aware modeled path' : 'Review the closure and model settings'}</span>
+                      <span>{currentPhysicalSimulation.status.summary.scenario.selected_trip ? 'Physical SUMO path with regional background traffic' : 'The selected trip did not finish inside the playback window'}</span>
                     </article>
                   </div>
                 ) : null}
                 <details
                   className="simulation-settings-disclosure"
-                  key={currentDiversionResult?.input_hash ?? 'simulation-setup'}
-                  open={!currentDiversionResult}
+                  key={currentPhysicalSimulation?.status.id ?? 'simulation-setup'}
+                  open={!currentPhysicalSimulation}
                 >
-                  <summary>{currentDiversionResult ? 'Model settings and rerun' : 'Set up the simulation'}</summary>
-                  <DiversionPanel
+                  <summary>{currentPhysicalSimulation ? 'Model settings and rerun' : 'Set up the simulation'}</summary>
+                  <PhysicalSimulationPanel
                     key={currentClosureKey}
                     origin={origin}
                     destination={destination}
                     closure={currentClosureComparison}
-                    settings={diversionSettings}
-                    onSettingsChange={setDiversionSettings}
-                    onResult={(result) => {
-                      if (result) {
-                        setDiversionSnapshot({ comparisonKey: currentClosureKey, result })
+                    onResult={(status, playback) => {
+                      if (status?.summary && playback) {
+                        setPhysicalSimulationSnapshot({ comparisonKey: currentClosureKey, status, playback })
                         setSimulationElapsedSeconds(0)
                         setSimulationPlaying(false)
                         setOpenModule(4)
                       } else {
-                        setDiversionSnapshot(null)
+                        setPhysicalSimulationSnapshot(null)
                         setSimulationElapsedSeconds(0)
                         setSimulationPlaying(false)
                       }
@@ -1149,7 +1144,7 @@ function App() {
               origin={origin}
               destination={destination}
               route={displayedResult?.baseline ?? null}
-              scenarioRoute={currentDiversionResult ? null : selectedAlternative?.route ?? displayedResult?.scenario ?? null}
+              scenarioRoute={currentPhysicalSimulation ? null : selectedAlternative?.route ?? displayedResult?.scenario ?? null}
               closureDirections={
                 closureSections.flatMap((section) =>
                   section.selection.directions.filter((direction) =>
@@ -1160,7 +1155,7 @@ function App() {
                   })),
                 )
               }
-              spilloverEdges={currentDiversionResult?.edge_changes ?? []}
+              spilloverEdges={currentPhysicalSimulation?.status.summary?.comparison.edge_changes ?? []}
               simulationFrame={simulationFrame}
               simulationPlaying={simulationPlaying}
               selectionMode={selectionMode}
@@ -1173,9 +1168,11 @@ function App() {
               onMapStateChange={setMapState}
             />
           </Suspense>
-          {currentDiversionResult ? (
+          {currentPhysicalSimulation?.status.summary ? (
             <SimulationPlayback
-              result={currentDiversionResult}
+              result={currentPhysicalSimulation.status.summary}
+              durationSeconds={currentPhysicalSimulation.playback.duration_seconds}
+              displayedVehicleLimit={currentPhysicalSimulation.playback.displayed_vehicle_limit}
               elapsedSeconds={simulationElapsedSeconds}
               playing={simulationPlaying}
               speed={simulationSpeed}

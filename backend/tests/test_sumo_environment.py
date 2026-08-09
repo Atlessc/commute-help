@@ -19,6 +19,10 @@ def _settings(tmp_path: Path) -> Settings:
         graph_path=tmp_path / "missing.graphml",
         graph_manifest_path=tmp_path / "missing-manifest.json",
         sumo_network_manifest_path=tmp_path / "missing-sumo-manifest.json",
+        traffic_schedule_path=tmp_path / "missing-schedule.parquet",
+        traffic_schedule_manifest_path=tmp_path / "missing-schedule-manifest.json",
+        proxy_od_seed_path=tmp_path / "missing-proxy-od.parquet",
+        proxy_od_report_path=tmp_path / "missing-proxy-report.json",
         sumo_active_model_manifest_path=tmp_path / "missing-model-manifest.json",
     )
 
@@ -34,6 +38,8 @@ def test_simulation_status_reports_local_runtime(tmp_path: Path) -> None:
     assert payload["runtime_mode"] in {"libsumo", "subprocess"}
     assert payload["netconvert_available"] is True
     assert payload["network_ready"] is False
+    assert payload["schedule_ready"] is False
+    assert payload["proxy_demand_ready"] is False
     assert payload["model_ready"] is False
     assert payload["offline_only"] is True
 

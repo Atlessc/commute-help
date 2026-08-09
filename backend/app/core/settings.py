@@ -23,14 +23,30 @@ class Settings(BaseSettings):
     graph_manifest_path: Path = Path("data/graphs/graph-manifest.json")
     closure_preset_path: Path = Path("data/presets/closure-presets.json")
     traffic_path: Path = Path("data/traffic")
+    traffic_schedule_path: Path = Path(
+        "data/traffic/processed/schedules/active/schedule.parquet"
+    )
+    traffic_schedule_manifest_path: Path = Path(
+        "data/traffic/processed/schedules/active/schedule-manifest.json"
+    )
+    proxy_od_seed_path: Path = Path(
+        "data/traffic/processed/background-seeds/2026-08-08-portland-vancouver-frozen-v2/od-demand-seeds.parquet"
+    )
+    proxy_od_report_path: Path = Path(
+        "data/traffic/processed/background-seeds/2026-08-08-portland-vancouver-frozen-v2/validation-report.json"
+    )
+    graph_nodes_path: Path = Path("data/graphs/nodes.parquet")
 
     sumo_path: Path = Path("data/sumo")
     sumo_networks_path: Path = Path("data/sumo/networks")
     sumo_demand_path: Path = Path("data/sumo/demand")
+    sumo_runtime_demand_cache_path: Path = Path("data/sumo/demand/runtime-cache")
     sumo_baselines_path: Path = Path("data/sumo/baselines")
     sumo_runs_path: Path = Path("data/sumo/runs")
     sumo_models_path: Path = Path("data/sumo/models")
     sumo_network_manifest_path: Path = Path("data/sumo/networks/active/network-manifest.json")
+    sumo_network_path: Path = Path("data/sumo/networks/active/metro.net.xml")
+    sumo_edge_map_path: Path = Path("data/sumo/networks/active/edge-map.parquet")
     sumo_active_model_manifest_path: Path = Path("data/sumo/models/active/model-manifest.json")
 
     sumo_binary: Path | None = None

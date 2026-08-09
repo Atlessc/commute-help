@@ -51,19 +51,173 @@ and active SUMO network share one checksum-recorded OSM source. The physical
 network is ready, but the model bundle remains intentionally unavailable until
 the 24/7 schedule, demand, calibration, and validation phases pass.
 
-The Phase 2 validation API is deliberately small:
+The physical-simulation API now supports both the committed toy fixture and a
+regional baseline-versus-closure comparison:
 
 ```text
 GET  /api/simulation/status
 POST /api/simulation/runs
 GET  /api/simulation/runs/{run_id}
 POST /api/simulation/runs/{run_id}/cancel
+GET  /api/simulation/runs/{run_id}/playback
 ```
 
-It runs the tiny committed closure fixture in an isolated process to prove
-progress, rerouting, TripInfo parsing, deterministic seeds, and cancellation.
-It is not yet the Portland scenario-run endpoint and its result remains
-uncalibrated.
+Every run remains in an isolated worker process. Regional requests use the
+active Portland–Vancouver network, compile the local 24/7 proxy demand for the
+selected time, run an identical-seed no-closure baseline and closure scenario,
+and return bounded physical playback frames. Results remain uncalibrated.
+
+The active general traffic schedule is
+`pv-portal-24x7-2026-08-08-v4`. It covers every 15-minute bucket and interpolates
+smoothly for arbitrary local times. Monday–Friday values are compiled from the
+completed PORTAL campaign. Saturday and Sunday currently reuse an unscaled
+Monday–Thursday shape and are explicitly labeled `modeled_unobserved`; they are
+not disguised as weekend observations.
+
+## Record and validate local benchmark trips
+
+Benchmark trips provide independent trip-level truth for later calibration.
+They are stored in the local SQLite database using graph nodes or coarse zones,
+not addresses or coordinates. Their exports and reports are written under the
+Git-ignored `data/benchmarks/private/` directory.
+
+Seed a benchmark from an existing saved scenario without copying its address,
+label, or coordinates:
+
+```bash
+npm run benchmarks -- seed-from-scenario \
+  --scenario-name "YOUR SAVED SCENARIO" \
+  --benchmark-id "anonymous-pm-trip-v1" \
+  --corridor-label "anonymous-pm-corridor" \
+  --actual-seconds 2400 \
+  --reported-no-traffic-seconds 1320
+```
+
+The `actual-seconds` value is the measured end-to-end trip. The optional
+`reported-no-traffic-seconds` value is a separate real-world comparison, not a
+synthetic model result. Use an anonymous ID and coarse corridor label because
+both are stored verbatim.
+
+Inspect, score, export, or restore the private set with:
+
+```bash
+npm run benchmarks -- list
+npm run benchmarks -- score
+npm run benchmarks -- export
+npm run benchmarks -- import data/benchmarks/private/benchmarks.json
+```
+
+Every command logs an ISO timestamp plus elapsed stopwatch time. `score`
+compares each value with the active directed graph's shortest physical
+free-flow path. It allows only a small explicit tolerance—3%, or five seconds
+when larger—and exits unsuccessfully if a value is materially faster than that
+floor. This catches physically impossible simulation output; passing it does
+not mean Portland traffic has been calibrated.
+
+Phase 4 also defines deterministic `depart_at` and `arrive_by` backend timing
+contracts. Arrive-by searches the time-dependent travel-time function for the
+latest feasible departure instead of subtracting a single average duration.
+These are validation primitives for the future scenario-run service, not yet a
+new physical-simulation control in the browser.
+
+## Build local 24/7 SUMO demand now
+
+Commute Help can build regional physical demand without waiting for Metro or RTC.
+It uses the existing 80-zone, 5,706-pair detector-fitted proxy matrix for spatial
+trip patterns, smoothly blends its AM and PM shapes, and uses the active PORTAL
+schedule to scale demand for any local date and minute.
+
+Build a local snapshot for the simulation time you want:
+
+```bash
+npm run sumo:build-proxy-demand -- \
+  --demand-version local-proxy-2026-09-15t0700-v1 \
+  --departure 2026-09-15T07:00:00-07:00 \
+  --duration-minutes 60 \
+  --scale 1 \
+  --seed 20260808
+```
+
+This works 24/7. Weekday schedule values combine observed historical input with
+explicit gap filling. Weekend values remain `modeled_unobserved`. The generated
+demand always remains `modeled_uncalibrated`; it is useful simulation input, not
+an agency OD table or a claim of exact neighborhood trip-making behavior.
+
+Scale 1 is the default because one SUMO vehicle must normally represent one
+physical vehicle for congestion and queue formation. Larger scales are useful
+for bounded pipeline checks, but they reduce physical density and cannot be used
+for traffic conclusions until a separate capacity-equivalence gate passes.
+
+Balanced stochastic rounding keeps both every OD-row error and total represented
+demand within one sampling unit. For the checked 07:00 run, 81,121.820 modeled
+trips became 81,100 represented trips and 1,622/1,622 SUMO vehicles routed.
+
+## Build agency-backed SUMO demand later
+
+The Phase 5 builder converts an `assignment_ready` Metro, RTC, or reconciled
+regional OD intake into class-aware, time-distributed SUMO routes. It refuses to
+use a merely normalized package when the bi-state overlap gate is still unknown.
+
+After the real delivery passes the documented intake process, build one immutable
+demand version for each requested period:
+
+```bash
+npm run sumo:build-demand -- \
+  --intake data/traffic/processed/regional-od/YOUR-CAMPAIGN-ID \
+  --demand-version YOUR-DEMAND-VERSION \
+  --period weekday_morning \
+  --start-time 07:00 \
+  --scale 10 \
+  --seed 20260808
+```
+
+`--scale 10` means one physical SUMO vehicle represents ten accepted OD vehicle
+trips. This reduces local compute cost but also changes physical density, so the
+scale is never hidden and must pass later capacity-equivalence validation. Use
+`--scale 1` for one simulated vehicle per accepted vehicle when the Mac and run
+window can handle it.
+
+The command logs an ISO timestamp and stopwatch on every stage, including
+30-second progress updates while `duarouter` is working. It writes ignored local
+artifacts under `data/sumo/demand/<demand-version>/`:
+
+```text
+demand-manifest.json
+regional.rou.xml.gz
+vehicle-types.add.xml
+zone-connectors.parquet
+zone-connectors-review.csv
+validation-report.md
+build.log
+duarouter.stdout.log
+duarouter.stderr.log
+```
+
+The manifest binds the output to intake, zone, edge-map, and SUMO-network
+checksums. It records connector policy, external gateway movement, vehicle-class
+mapping, random seed, sampling scale, represented demand, conservation error,
+release status, and route validation. SUMO's generated timestamp and absolute
+local paths are removed from the packaged route file.
+
+The committed synthetic fixture can verify the machinery without using agency
+or private data:
+
+```bash
+npm run traffic:intake-regional-od -- \
+  --campaign backend/tests/fixtures/regional_od
+
+npm run sumo:build-demand -- \
+  --intake data/traffic/processed/regional-od/synthetic-regional-od-v1 \
+  --demand-version synthetic-phase5-am-v1 \
+  --period weekday_morning \
+  --start-time 07:00 \
+  --scale 50 \
+  --seed 20260808
+```
+
+The agency path is an accuracy upgrade. It does not block local proxy simulation.
+Agency-backed results still remain uncalibrated until their count, speed,
+capacity, gateway, and held-out validation gates pass.
 
 ## Daily startup
 
@@ -98,6 +252,10 @@ Git.
 | `COMMUTE_HELP_GRAPH_PATH` | `data/graphs/portland-vancouver.graphml` | Generated routing graph |
 | `COMMUTE_HELP_GRAPH_MANIFEST_PATH` | `data/graphs/graph-manifest.json` | Version and checksum manifest |
 | `COMMUTE_HELP_TRAFFIC_PATH` | `data/traffic` | Ignored raw, normalized, and profile artifacts |
+| `COMMUTE_HELP_TRAFFIC_SCHEDULE_PATH` | `data/traffic/processed/schedules/active/schedule.parquet` | Active 24/7 schedule |
+| `COMMUTE_HELP_TRAFFIC_SCHEDULE_MANIFEST_PATH` | `data/traffic/processed/schedules/active/schedule-manifest.json` | Schedule provenance and checksum |
+| `COMMUTE_HELP_PROXY_OD_SEED_PATH` | active graph's `od-demand-seeds.parquet` | Local detector-fitted proxy OD paths |
+| `COMMUTE_HELP_PROXY_OD_REPORT_PATH` | active graph's background-seed report | Proxy model version and evidence gate |
 | `COMMUTE_HELP_SUMO_RUNTIME_MODE` | `auto` | Prefer `libsumo`, with local subprocess fallback |
 | `COMMUTE_HELP_SUMO_OFFLINE_ONLY` | `true` | Keep physical simulation on approved local inputs |
 
@@ -311,47 +469,44 @@ The committed `NTAD_North_American_Roads_...csv` is a road-reference dataset,
 not timestamped traffic observations. Commute Help does not use it to claim
 historical calibration.
 
-## Model network diversion
+## Run the physical regional simulation
 
-After comparing one or more active road impacts, use **Where might traffic
-divert?** to estimate relative spillover across the surrounding network. Select
-an imported background-traffic profile when one contains volume observations,
-choose the additional corridor demand, number of origin/destination pairs,
-assignment iterations, and endpoint dispersion radius, then select **Model
-network diversion**.
+After comparing one or more active road impacts, open **Simulation** and select
+**Run physical simulation**. Step 4 sends the selected trip, every directed road
+impact, its schedule and severity, and the selected departure time to the local
+regional SUMO worker.
 
-The backend builds a typical 15-minute directed background snapshot from the
-selected profile's matched September/October weekday observations. Median
-station volume and speed seed covered graph edges. It then disperses additional
-trips around the selected route, removes observed flow from fully closed edges,
-reassigns that displaced flow, and compares the normal and impact-aware edge
-volumes. It uses estimated road capacities, incremental all-or-nothing
-assignment, the method of successive averages, and an uncalibrated BPR
-congestion curve. Full closures remove only selected directed edges; lane
-restrictions reduce estimated capacity; temporary speeds change route cost.
+The worker builds one schedule-scaled proxy OD population, routes it through
+the active SUMO network, and reuses the exact demand and seed for two mesoscopic
+runs. Full closures disallow the selected directed SUMO lanes, lane restrictions
+reduce usable lanes, speed restrictions cap lane speed, and scheduled impacts
+activate and reopen at their declared times. Active vehicles receive dynamic
+travel-time rerouting after a state change.
 
-The result includes a closure-and-traffic-aware recommended route for the
-selected trip. That route is drawn on the map and becomes the route used for
-Google Maps handoff. The map shows modeled increases as solid orange lines and
-decreases as dashed blue lines, with direction and vehicles/hour changes listed
-below. Coverage, source, observation count, time bucket, and displaced observed
-flow remain visible with every run.
+Playback begins paused. The selected trip follows the physical SUMO trajectory;
+its traveled history stays blue and its current projected route stays teal.
+Background dots are deterministic sampled SUMO vehicles, not browser-invented
+traffic. Pause, restart, scrub, and 1x through 50x change playback only—the
+worker always computes as quickly as the Mac allows. Road overlays compare mean
+active vehicle occupancy and speed between the two runs.
 
-Every result remains labeled `modeled_uncalibrated`: observed stations calibrate
-only the covered background edges, while uncovered roads retain class-based
-estimates. Directly observed flow on closed edges is real historical input, but
-its alternate path is modeled. Regional origin/destination demand, traffic
-signals, queues spilling between intersections, live conditions, and complete
-network calibration are not yet included. Use coverage and assumptions when
-judging the result rather than treating sparse station data as a complete
-regional forecast.
+Use the default 1:1 physical scale for congestion conclusions. Faster 5:1,
+10:1, and 25:1 modes are visibly marked as previews because reducing physical
+density changes queue formation. The worker enforces the active graph's hard
+free-flow floor and rejects physically impossible selected-trip results.
 
-Runs report progress and can be cancelled. Completed results are cached in
-SQLite by graph version, model version, and normalized inputs; repeating the
-same run can reuse the local cache. Active jobs are process-local and do not
-survive a backend restart. To keep browser GeoJSON small, only the strongest
-changed edges are returned for display, while summary counts and extrema cover
-the full changed set.
+Time-specific routed demand is checksum-verified and cached locally under
+`data/sumo/demand/runtime-cache/`. Runs report progress and can be cancelled.
+The browser receives at most 900 displayed background vehicles per frame and
+the 300 strongest changed roads; it never receives the full regional vehicle
+population.
+
+The result is `modeled_uncalibrated`. The local 80-zone proxy captures a
+detector-fitted regional pattern but is not an observed regional OD table.
+Mesoscopic playback does not yet provide affected-area microscopic signal,
+merge, or lane-changing fidelity, and one run does not provide p85/p90/p95 or
+on-time probability. Those claims remain blocked until the documented
+calibration, microscopic coupling, and ensemble gates pass.
 
 ## Save and share scenarios
 

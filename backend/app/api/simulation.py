@@ -9,6 +9,7 @@ from backend.app.schemas.simulation import (
     SimulationRunCreated,
     SimulationRunRequest,
     SimulationRunStatus,
+    SimulationPlayback,
 )
 from backend.app.services.sumo.environment import SumoEnvironmentService
 from backend.app.services.sumo.run_service import (
@@ -63,3 +64,13 @@ def cancel_simulation_run(run_id: UUID, request: Request) -> SimulationRunStatus
         return _runs(request).cancel(run_id)
     except SimulationRunNotFoundError as error:
         raise HTTPException(status_code=404, detail="Simulation run not found") from error
+
+
+@router.get("/runs/{run_id}/playback", response_model=SimulationPlayback)
+def get_simulation_playback(run_id: UUID, request: Request) -> SimulationPlayback:
+    try:
+        return SimulationPlayback.model_validate(_runs(request).playback(run_id))
+    except SimulationRunNotFoundError as error:
+        raise HTTPException(status_code=404, detail="Simulation playback not found") from error
+    except SimulationRunConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error

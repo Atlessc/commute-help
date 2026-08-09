@@ -94,24 +94,27 @@ Flow conservation passed to floating-point tolerance, but only 11,621 of
 not evidence of zero traffic; they are roads the coarse proxy path set did not
 use. The machine-readable report contains the exact current counts.
 
-Therefore this artifact is useful for:
+Therefore this artifact is now used for:
 
-- testing OD calibration and conservation machinery;
+- local `modeled_uncalibrated` SUMO background demand;
+- arbitrary-time snapshots scaled by the active 24/7 PORTAL schedule;
+- testing closure reassignment and regional physical-run machinery;
 - checking freeway/corridor directional fit;
 - evaluating import schemas for a real OD matrix;
 - regression fixtures and performance measurements.
 
-It is not yet suitable for:
+It is still not evidence for:
 
-- selectable production background traffic;
-- neighborhood spillover claims;
-- closure domino-effect playback;
+- historically calibrated regional OD;
+- exact neighborhood productions, attractions, or route shares;
+- explicit external/study-area gateway demand;
 - calling a result historically calibrated.
 
-## Required remediation
+## Optional accuracy upgrades
 
-The next data input must replace road-capacity proxy zones with real productions
-and attractions:
+The local proxy is not blocked on these deliveries. If received, they can replace
+or recalibrate its road-capacity proxy zones with stronger productions and
+attractions:
 
 1. Metro base-year auto OD trip tables by time period for Oregon-side model
    zones.

@@ -71,7 +71,7 @@ def test_database_uses_wal_and_initializes_metadata(tmp_path: Path) -> None:
         ).fetchone()
 
     assert journal_mode == ("wal",)
-    assert schema_version == ("2",)
+    assert schema_version == ("4",)
 
 
 def _scenario_content() -> dict:

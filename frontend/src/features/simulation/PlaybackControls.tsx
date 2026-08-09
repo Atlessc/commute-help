@@ -1,8 +1,10 @@
 import { Pause, Play, RotateCcw } from 'lucide-react'
-import type { DiversionResult } from '../../api/diversion'
+import type { RegionalSimulationSummary } from '../../api/simulation'
 
 type SimulationPlaybackProps = {
-  result: DiversionResult
+  result: RegionalSimulationSummary
+  durationSeconds: number
+  displayedVehicleLimit: number
   elapsedSeconds: number
   playing: boolean
   speed: number
@@ -12,10 +14,10 @@ type SimulationPlaybackProps = {
   onSpeedChange: (speed: number) => void
 }
 
-const DURATION_SECONDS = 60 * 60
-
 export function SimulationPlayback({
   result,
+  durationSeconds,
+  displayedVehicleLimit,
   elapsedSeconds,
   playing,
   speed,
@@ -61,28 +63,31 @@ export function SimulationPlayback({
           aria-label="Simulation timeline"
           type="range"
           min={0}
-          max={DURATION_SECONDS}
+          max={durationSeconds}
           step={1}
           value={elapsedSeconds}
           onChange={(event) => onElapsedChange(Number(event.target.value))}
         />
         <div className="timeline-labels" aria-label="Jump to simulated time">
-          {[0, 15, 30, 45, 60].map((minutes) => (
+          {[0, 0.25, 0.5, 0.75, 1].map((portion) => {
+            const minutes = Math.round(durationSeconds * portion / 60)
+            return (
             <button
               type="button"
-              key={minutes}
+              key={portion}
               onClick={() => onElapsedChange(minutes * 60)}
             >
               {minutes}m
             </button>
-          ))}
+            )
+          })}
         </div>
       </div>
 
       <div className="simulation-elapsed">
         <small>Elapsed</small>
         <strong>{Math.floor(elapsedSeconds / 60)}m</strong>
-        <span>of 60m</span>
+        <span>of {Math.round(durationSeconds / 60)}m</span>
       </div>
 
       <label className="simulation-speed">
@@ -115,7 +120,8 @@ export function SimulationPlayback({
       <div className="simulation-status">
         <i />
         {playing ? `Playback running · ${Math.round(speed)}×` : 'Simulation computed · ready to play'}
-        <span>Modeled · uncalibrated · {result.input_hash.slice(0, 8)}</span>
+        <span>Physical SUMO · uncalibrated · seed {result.seed} · {result.real_vehicles_per_simulated_vehicle}:1 scale</span>
+        <span>Each dot is one sampled SUMO vehicle representing {result.real_vehicles_per_simulated_vehicle.toLocaleString()} modeled vehicle{result.real_vehicles_per_simulated_vehicle === 1 ? '' : 's'} · up to {displayedVehicleLimit.toLocaleString()} dots</span>
       </div>
     </section>
   )

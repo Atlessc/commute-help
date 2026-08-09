@@ -1,6 +1,7 @@
 """Discover and report the local SUMO runtime without initializing a simulation."""
 
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -45,6 +46,37 @@ class SumoEnvironmentService:
             warnings.append("No active SUMO network manifest exists yet.")
         if not self._settings.sumo_active_model_manifest_path.is_file():
             warnings.append("No frozen SUMO model bundle exists yet.")
+        schedule_version = None
+        if self._settings.traffic_schedule_manifest_path.is_file():
+            try:
+                schedule_version = str(
+                    json.loads(
+                        self._settings.traffic_schedule_manifest_path.read_text(
+                            encoding="utf-8"
+                        )
+                    )["schedule_version"]
+                )
+            except (OSError, KeyError, json.JSONDecodeError):
+                warnings.append("The active traffic schedule manifest is invalid.")
+        else:
+            warnings.append("No active 24/7 traffic schedule exists yet.")
+        proxy_demand_model_version = None
+        if (
+            self._settings.proxy_od_seed_path.is_file()
+            and self._settings.proxy_od_report_path.is_file()
+        ):
+            try:
+                proxy_report = json.loads(
+                    self._settings.proxy_od_report_path.read_text(encoding="utf-8")
+                )
+                if proxy_report.get("evidence_level") != "modeled_uncalibrated":
+                    warnings.append("The local proxy OD report has an invalid evidence level.")
+                else:
+                    proxy_demand_model_version = str(proxy_report["model_version"])
+            except (OSError, KeyError, json.JSONDecodeError):
+                warnings.append("The local proxy OD report is invalid.")
+        else:
+            warnings.append("No local proxy OD seed exists yet.")
 
         return SimulationCapabilities(
             available=runtime_mode is not None,
@@ -55,6 +87,16 @@ class SumoEnvironmentService:
             sumolib_available=sumolib_available,
             libsumo_available=libsumo_available,
             network_ready=self._settings.sumo_network_manifest_path.is_file(),
+            schedule_ready=(
+                schedule_version is not None and self._settings.traffic_schedule_path.is_file()
+            ),
+            schedule_version=schedule_version,
+            proxy_demand_ready=(
+                proxy_demand_model_version is not None
+                and schedule_version is not None
+                and self._settings.sumo_network_manifest_path.is_file()
+            ),
+            proxy_demand_model_version=proxy_demand_model_version,
             model_ready=self._settings.sumo_active_model_manifest_path.is_file(),
             max_parallel_runs=max(1, self._settings.sumo_max_parallel_runs),
             offline_only=self._settings.sumo_offline_only,

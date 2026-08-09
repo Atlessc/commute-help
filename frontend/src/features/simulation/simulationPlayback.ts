@@ -1,5 +1,6 @@
 import type { DiversionPlaybackEdge, DiversionResult } from '../../api/diversion'
 import type { RouteSummary } from '../../api/routing'
+import type { PhysicalSimulationPlayback } from '../../api/simulation'
 
 export type TrafficAgentPoint = {
   id: string
@@ -15,6 +16,53 @@ export type SimulationMapFrame = {
   tripCoordinate: [number, number] | null
   progress: number
   rerouted: boolean
+}
+
+export function physicalSimulationMapFrame(
+  playback: PhysicalSimulationPlayback,
+  elapsedSeconds: number,
+  rerouted: boolean,
+): SimulationMapFrame {
+  const frames = playback.frames
+  if (frames.length === 0) {
+    return { agents: [], traveledRoute: [], projectedRoute: [], tripCoordinate: null, progress: 0, rerouted }
+  }
+  const elapsed = clamp(elapsedSeconds, 0, playback.duration_seconds)
+  const nextIndex = frames.findIndex((frame) => frame.elapsed_seconds >= elapsed)
+  const right = frames[nextIndex < 0 ? frames.length - 1 : nextIndex]
+  const left = frames[Math.max(0, (nextIndex < 0 ? frames.length : nextIndex) - 1)]
+  const span = Math.max(right.elapsed_seconds - left.elapsed_seconds, 1)
+  const amount = clamp((elapsed - left.elapsed_seconds) / span, 0, 1)
+  const rightAgents = new Map(right.agents.map((agent) => [agent.id, agent]))
+  const agents = left.agents.map((agent) => {
+    const target = rightAgents.get(agent.id)
+    return target ? {
+      ...target,
+      coordinate: [
+        lerp(agent.coordinate[0], target.coordinate[0], amount),
+        lerp(agent.coordinate[1], target.coordinate[1], amount),
+      ] as [number, number],
+    } : agent
+  })
+  const tripCoordinate = interpolateCoordinate(left.trip_coordinate, right.trip_coordinate, amount)
+  return {
+    agents,
+    traveledRoute: amount < 0.5 ? left.traveled_route : right.traveled_route,
+    projectedRoute: amount < 0.5 ? left.projected_route : right.projected_route,
+    tripCoordinate,
+    progress: playback.duration_seconds ? elapsed / playback.duration_seconds : 0,
+    rerouted,
+  }
+}
+
+function interpolateCoordinate(
+  left: [number, number] | null,
+  right: [number, number] | null,
+  amount: number,
+): [number, number] | null {
+  if (!left) return right
+  if (!right) return left
+  return [lerp(left[0], right[0], amount), lerp(left[1], right[1], amount)]
 }
 
 type AgentSeed = {

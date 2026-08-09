@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import networkx as nx
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,7 @@ from backend.app.schemas.simulation import (
     SimulationRunRequest,
     SimulationRunStatus,
 )
+from backend.app.services.graph_service import GraphService
 
 
 class SimulationRunNotFoundError(LookupError):
@@ -31,9 +33,15 @@ class SimulationRunConflictError(RuntimeError):
 
 
 class SimulationRunService:
-    def __init__(self, database: DatabaseManager, settings: Settings) -> None:
+    def __init__(
+        self,
+        database: DatabaseManager,
+        settings: Settings,
+        graph_service: GraphService | None = None,
+    ) -> None:
         self.database = database
         self.settings = settings
+        self.graph_service = graph_service
         self._processes: dict[str, subprocess.Popen[str]] = {}
         self._lock = threading.Lock()
 
@@ -45,16 +53,10 @@ class SimulationRunService:
         netconvert = shutil.which("netconvert") or str(
             Path(sys.executable).parent / "netconvert"
         )
+        worker_request = self._worker_request(request, sumo, netconvert)
         run_id = str(uuid4())
         run_dir = (self.settings.sumo_runs_path / run_id).resolve()
         run_dir.mkdir(parents=True, exist_ok=False)
-        worker_request = {
-            "seed": request.seed,
-            "fixture_dir": str(Path("backend/tests/fixtures/sumo").resolve()),
-            "sumo_binary": sumo,
-            "netconvert_binary": netconvert,
-            "step_delay_ms": request.step_delay_ms,
-        }
         request_path = run_dir / "request.json"
         request_path.write_text(json.dumps(worker_request, indent=2) + "\n", encoding="utf-8")
         now = datetime.now(UTC).isoformat()
@@ -67,15 +69,16 @@ class SimulationRunService:
                 """INSERT INTO simulation_runs
                 (id, run_kind, status, run_key, seed, graph_version, sumo_version,
                  sumo_network_version, request_json, artifact_dir, progress, created_at)
-                VALUES (?, 'validation', 'queued', ?, ?, ?, ?, ?, ?, ?, 0, ?)""",
+                VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, 0, ?)""",
                 (
                     run_id,
+                    request.run_kind,
                     run_key,
                     request.seed,
                     graph_version,
                     sumo_version,
                     network_version,
-                    json.dumps(request.model_dump()),
+                    json.dumps(request.model_dump(mode="json")),
                     str(run_dir),
                     now,
                 ),
@@ -98,6 +101,19 @@ class SimulationRunService:
             connection.commit()
         threading.Thread(target=self._monitor, args=(run_id, process, run_dir), daemon=True).start()
         return SimulationRunCreated(id=UUID(run_id), status="running")
+
+    def playback(self, run_id: UUID) -> dict[str, Any]:
+        status = self.get(run_id)
+        if status.status != "completed":
+            raise SimulationRunConflictError("Simulation playback is not ready")
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT artifact_dir FROM simulation_runs WHERE id=?", (str(run_id),)
+            ).fetchone()
+        playback_path = Path(row["artifact_dir"]) / "playback.json"
+        if not playback_path.is_file():
+            raise SimulationRunNotFoundError()
+        return json.loads(playback_path.read_text(encoding="utf-8"))
 
     def get(self, run_id: UUID) -> SimulationRunStatus:
         with self.database.connect() as connection:
@@ -183,7 +199,11 @@ class SimulationRunService:
             progress = 1.0 if status == "completed" else 0.0
         else:
             status = "failed"
-            error = f"SUMO worker exited with code {return_code}"
+            error = (
+                str(result.get("error"))
+                if result and result.get("error")
+                else f"SUMO worker exited with code {return_code}"
+            )
             progress = 0.0
         with self.database.connect() as connection:
             connection.execute(
@@ -212,3 +232,73 @@ class SimulationRunService:
             str(network["network_version"]),
             str(network["sumo_version"]),
         )
+
+    def _worker_request(
+        self,
+        request: SimulationRunRequest,
+        sumo_binary: str,
+        netconvert_binary: str,
+    ) -> dict[str, Any]:
+        common = {
+            "run_kind": request.run_kind,
+            "seed": request.seed,
+            "sumo_binary": sumo_binary,
+            "step_delay_ms": request.step_delay_ms,
+            "max_run_seconds": self.settings.sumo_max_run_seconds,
+            "max_run_disk_mb": self.settings.sumo_max_run_disk_mb,
+        }
+        if request.run_kind == "validation":
+            return {
+                **common,
+                "fixture_dir": str(Path("backend/tests/fixtures/sumo").resolve()),
+                "netconvert_binary": netconvert_binary,
+            }
+        return {
+            **common,
+            "request": request.model_dump(mode="json"),
+            "free_flow_floor_seconds": self._free_flow_floor_seconds(request),
+            "network_path": str(self.settings.sumo_network_path.resolve()),
+            "network_manifest_path": str(
+                self.settings.sumo_network_manifest_path.resolve()
+            ),
+            "edge_map_path": str(self.settings.sumo_edge_map_path.resolve()),
+            "graph_manifest_path": str(self.settings.graph_manifest_path.resolve()),
+            "nodes_path": str(self.settings.graph_nodes_path.resolve()),
+            "background_seed_directory": str(
+                self.settings.proxy_od_seed_path.resolve().parent
+            ),
+            "demand_cache_directory": str(
+                self.settings.sumo_runtime_demand_cache_path.resolve()
+            ),
+            "traffic_schedule_path": str(
+                self.settings.traffic_schedule_path.resolve()
+            ),
+            "traffic_schedule_manifest_path": str(
+                self.settings.traffic_schedule_manifest_path.resolve()
+            ),
+            "max_visible_vehicles": self.settings.sumo_playback_max_visible_vehicles,
+        }
+
+    def _free_flow_floor_seconds(self, request: SimulationRunRequest) -> float:
+        if self.graph_service is None or self.graph_service.graph is None:
+            raise SimulationRunConflictError("The active graph is required for a regional run")
+        origin = self.graph_service.node_lookup.get(str(request.origin_node_id))
+        destination = self.graph_service.node_lookup.get(str(request.destination_node_id))
+        if origin is None or destination is None:
+            raise SimulationRunConflictError("The selected trip nodes are not in the active graph")
+        try:
+            path = nx.shortest_path(
+                self.graph_service.graph,
+                origin,
+                destination,
+                weight="free_flow_seconds",
+            )
+        except (nx.NetworkXNoPath, nx.NodeNotFound) as error:
+            raise SimulationRunConflictError(
+                "The selected trip has no physical free-flow path"
+            ) from error
+        seconds = 0.0
+        for node_u, node_v in zip(path, path[1:], strict=False):
+            edges = self.graph_service.graph.get_edge_data(node_u, node_v)
+            seconds += min(float(edge["free_flow_seconds"]) for edge in edges.values())
+        return round(seconds, 3)

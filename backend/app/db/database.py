@@ -37,7 +37,7 @@ class DatabaseManager:
             connection.execute(
                 """
                 INSERT INTO app_metadata (key, value)
-                VALUES ('schema_version', '2')
+                VALUES ('schema_version', '4')
                 ON CONFLICT(key) DO UPDATE SET
                     value = excluded.value,
                     updated_at = CURRENT_TIMESTAMP
@@ -126,7 +126,7 @@ class DatabaseManager:
 
                 CREATE TABLE IF NOT EXISTS simulation_runs (
                     id TEXT PRIMARY KEY,
-                    run_kind TEXT NOT NULL CHECK (run_kind IN ('validation')),
+                    run_kind TEXT NOT NULL CHECK (run_kind IN ('validation', 'regional_comparison')),
                     status TEXT NOT NULL CHECK (status IN (
                         'queued', 'running', 'completed', 'failed',
                         'cancel_requested', 'cancelled'
@@ -149,8 +149,85 @@ class DatabaseManager:
 
                 CREATE INDEX IF NOT EXISTS idx_simulation_runs_status
                 ON simulation_runs(status, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS benchmark_trips (
+                    id TEXT PRIMARY KEY,
+                    graph_version TEXT NOT NULL,
+                    departure_time TEXT NOT NULL,
+                    day_type TEXT NOT NULL CHECK (
+                        day_type IN ('mon_thu', 'friday', 'saturday', 'sunday')
+                    ),
+                    origin_node TEXT,
+                    destination_node TEXT,
+                    origin_zone TEXT,
+                    destination_zone TEXT,
+                    corridor_label TEXT NOT NULL,
+                    actual_travel_seconds REAL NOT NULL CHECK (actual_travel_seconds > 0),
+                    reported_no_traffic_seconds REAL CHECK (reported_no_traffic_seconds > 0),
+                    incident_flag INTEGER NOT NULL DEFAULT 0 CHECK (incident_flag IN (0, 1)),
+                    weather_category TEXT,
+                    checkpoints_json TEXT NOT NULL DEFAULT '[]',
+                    notes TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    CHECK (
+                        (origin_node IS NOT NULL AND destination_node IS NOT NULL
+                         AND origin_zone IS NULL AND destination_zone IS NULL)
+                        OR
+                        (origin_node IS NULL AND destination_node IS NULL
+                         AND origin_zone IS NOT NULL AND destination_zone IS NOT NULL)
+                    )
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_benchmark_trips_departure
+                ON benchmark_trips(departure_time);
                 """
             )
+            simulation_sql = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='simulation_runs'"
+            ).fetchone()
+            if simulation_sql and "regional_comparison" not in str(simulation_sql[0]):
+                connection.executescript(
+                    """
+                    ALTER TABLE simulation_runs RENAME TO simulation_runs_v3;
+                    CREATE TABLE simulation_runs (
+                        id TEXT PRIMARY KEY,
+                        run_kind TEXT NOT NULL CHECK (run_kind IN ('validation', 'regional_comparison')),
+                        status TEXT NOT NULL CHECK (status IN (
+                            'queued', 'running', 'completed', 'failed',
+                            'cancel_requested', 'cancelled'
+                        )),
+                        run_key TEXT NOT NULL,
+                        seed INTEGER NOT NULL,
+                        graph_version TEXT NOT NULL,
+                        sumo_version TEXT NOT NULL,
+                        sumo_network_version TEXT NOT NULL,
+                        request_json TEXT NOT NULL,
+                        summary_json TEXT,
+                        artifact_dir TEXT NOT NULL,
+                        progress REAL NOT NULL DEFAULT 0.0,
+                        current_sim_second REAL,
+                        created_at TEXT NOT NULL,
+                        started_at TEXT,
+                        finished_at TEXT,
+                        error_message TEXT
+                    );
+                    INSERT INTO simulation_runs SELECT * FROM simulation_runs_v3;
+                    DROP TABLE simulation_runs_v3;
+                    CREATE INDEX idx_simulation_runs_status
+                    ON simulation_runs(status, created_at DESC);
+                    """
+                )
+            benchmark_columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(benchmark_trips)").fetchall()
+            }
+            if "reported_no_traffic_seconds" not in benchmark_columns:
+                connection.execute(
+                    "ALTER TABLE benchmark_trips ADD COLUMN "
+                    "reported_no_traffic_seconds REAL CHECK "
+                    "(reported_no_traffic_seconds > 0)"
+                )
 
     def check_health(self) -> None:
         """Raise a safe server-side error when SQLite is unavailable."""

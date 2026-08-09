@@ -1,0 +1,619 @@
+"""Run a bounded regional baseline and arbitrary-closure comparison in SUMO."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import time
+from collections import defaultdict
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+
+from backend.app.services.sumo.demand_service import build_sumo_demand
+from backend.app.services.sumo.output_service import parse_tripinfo
+from backend.app.services.sumo.proxy_od_service import compile_proxy_od_snapshot
+from backend.app.services.traffic_schedule_service import TrafficScheduleService
+
+VEHICLE_CLASSES = ["passenger", "delivery", "truck", "bus"]
+
+
+def _atomic_json(path: Path, value: dict[str, Any]) -> None:
+    temporary = path.with_suffix(path.suffix + ".part")
+    temporary.write_text(json.dumps(value, separators=(",", ":")) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _inside(child: Path, parent: Path) -> bool:
+    try:
+        child.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
+    run_dir = request_path.parent.resolve()
+    repository = Path.cwd().resolve()
+    input_paths = {
+        name: Path(worker[name]).resolve()
+        for name in (
+            "network_path",
+            "network_manifest_path",
+            "edge_map_path",
+            "graph_manifest_path",
+            "nodes_path",
+            "background_seed_directory",
+            "demand_cache_directory",
+            "traffic_schedule_path",
+            "traffic_schedule_manifest_path",
+        )
+    }
+    if not _inside(run_dir, repository) or any(
+        not _inside(path, repository) for path in input_paths.values()
+    ):
+        raise ValueError("Regional worker inputs must remain inside the local repository")
+
+    payload = dict(worker["request"])
+    departure = datetime.fromisoformat(payload["departure_time"])
+    warmup_minutes = int(payload["warmup_minutes"])
+    analysis_minutes = int(payload["analysis_minutes"])
+    total_minutes = warmup_minutes + analysis_minutes
+    seed = int(payload["seed"])
+    scale = float(payload["real_vehicles_per_simulated_vehicle"])
+    progress_path = run_dir / "progress.json"
+    result_path = run_dir / "result.json"
+    cancel_path = run_dir / "cancel.requested"
+
+    schedule = TrafficScheduleService(
+        input_paths["traffic_schedule_path"],
+        input_paths["traffic_schedule_manifest_path"],
+    )
+    schedule.load()
+    source_dir = run_dir / "proxy-source"
+    cache_key = hashlib.sha256(
+        json.dumps(
+            {
+                "start": (departure - timedelta(minutes=warmup_minutes)).isoformat(),
+                "duration_minutes": total_minutes,
+                "scale": scale,
+                "seed": seed,
+                "network_manifest": input_paths["network_manifest_path"].read_text(encoding="utf-8"),
+                "schedule_manifest": input_paths["traffic_schedule_manifest_path"].read_text(encoding="utf-8"),
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()[:24]
+    cache_root = input_paths["demand_cache_directory"]
+    cache_root.mkdir(parents=True, exist_ok=True)
+    demand_dir = cache_root / cache_key
+    _atomic_json(progress_path, {"status": "running", "stage": "demand", "progress": 0.01})
+    manifest_path = demand_dir / "demand-manifest.json"
+    cached_manifest = _cached_demand_manifest(manifest_path, demand_dir)
+    if cached_manifest is not None:
+        demand_manifest = cached_manifest
+        _atomic_json(progress_path, {"status": "running", "stage": "demand_cache_hit", "progress": 0.08})
+    else:
+        compile_proxy_od_snapshot(
+            background_seed_directory=input_paths["background_seed_directory"],
+            nodes_path=input_paths["nodes_path"],
+            graph_manifest_path=input_paths["graph_manifest_path"],
+            schedule_service=schedule,
+            departure_time=departure - timedelta(minutes=warmup_minutes),
+            duration_minutes=total_minutes,
+            output_directory=source_dir,
+            source_version=f"regional-run-{seed}",
+            log=lambda _message: None,
+        )
+        staging_demand = run_dir / "demand-staging"
+        demand_manifest = build_sumo_demand(
+            intake_directory=source_dir,
+            network_path=input_paths["network_path"],
+            network_manifest_path=input_paths["network_manifest_path"],
+            edge_map_path=input_paths["edge_map_path"],
+            output_directory=staging_demand,
+            demand_version=f"runtime-{cache_key}",
+            period="proxy_snapshot",
+            start_seconds=0,
+            sampling_scale=scale,
+            seed=seed,
+            log=lambda _message: None,
+        )
+        try:
+            os.replace(staging_demand, demand_dir)
+        except OSError:
+            if not manifest_path.is_file():
+                raise
+        demand_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    # Import libsumo only after every GeoPandas/PyArrow demand artifact has
+    # been read and written. libsumo's GDAL registration otherwise collides
+    # with PyArrow's local filesystem factory in this macOS environment.
+    global libsumo
+    import libsumo
+    if cancel_path.exists():
+        _atomic_json(result_path, {"status": "cancelled", "seed": seed})
+        return 0
+
+    edge_map = pd.read_parquet(
+        input_paths["edge_map_path"],
+        columns=["app_edge_id", "sumo_edge_id", "status", "road_name"],
+    )
+    app_edge_ids = {
+        payload["origin_app_edge_id"],
+        payload["destination_app_edge_id"],
+        *(
+            edge_id
+            for closure in payload["closures"]
+            for edge_id in closure["app_edge_ids"]
+        ),
+    }
+    mapping = _accepted_mapping(edge_map, app_edge_ids)
+    edge_names = {
+        str(row.sumo_edge_id): str(row.road_name or row.sumo_edge_id)
+        for row in edge_map.dropna(subset=["sumo_edge_id"]).itertuples()
+    }
+    common = {
+        "network_path": input_paths["network_path"],
+        "route_path": demand_dir / "regional.rou.xml.gz",
+        "sumo_binary": str(worker["sumo_binary"]),
+        "mapping": mapping,
+        "payload": payload,
+        "run_dir": run_dir,
+        "cancel_path": cancel_path,
+        "progress_path": progress_path,
+        "max_visible": int(worker["max_visible_vehicles"]),
+        "deadline": time.monotonic() + int(worker["max_run_seconds"]),
+    }
+    baseline = _run_variant(name="baseline", closures=[], progress_start=0.10, progress_span=0.42, **common)
+    if baseline["status"] == "cancelled":
+        _atomic_json(result_path, {"status": "cancelled", "seed": seed})
+        return 0
+    scenario = _run_variant(
+        name="scenario",
+        closures=payload["closures"],
+        progress_start=0.52,
+        progress_span=0.47,
+        **common,
+    )
+    if scenario["status"] == "cancelled":
+        _atomic_json(result_path, {"status": "cancelled", "seed": seed})
+        return 0
+
+    floor_seconds = float(worker["free_flow_floor_seconds"])
+    minimum_allowed_seconds = max(0.1, floor_seconds * 0.97)
+    for label, variant in (("baseline", baseline), ("scenario", scenario)):
+        trip = variant.get("selected_trip")
+        if trip and float(trip["duration"]) < minimum_allowed_seconds:
+            raise ValueError(
+                f"{label} selected trip violated the physical free-flow floor"
+            )
+
+    playback = {
+        "schema_version": 1,
+        "duration_seconds": analysis_minutes * 60,
+        "frame_interval_seconds": int(payload["frame_interval_seconds"]),
+        "seed": seed,
+        "real_vehicles_per_simulated_vehicle": scale,
+        "displayed_vehicle_limit": int(worker["max_visible_vehicles"]),
+        "frames": scenario.pop("frames"),
+    }
+    _atomic_json(run_dir / "playback.json", playback)
+    edge_changes = _edge_changes(
+        edge_names, baseline.pop("edge_stats"), scenario.pop("edge_stats")
+    )
+    result = {
+        "status": "completed",
+        "evidence_level": "modeled_uncalibrated",
+        "seed": seed,
+        "demand_version": demand_manifest["demand_version"],
+        "demand_model_version": demand_manifest["source"]["model"]["version"],
+        "real_vehicles_per_simulated_vehicle": scale,
+        "represented_real_vehicle_trips": demand_manifest["sampling"][
+            "represented_real_vehicle_trips"
+        ],
+        "baseline": baseline,
+        "scenario": scenario,
+        "comparison": {
+            "selected_trip_delta_seconds": _trip_delta(baseline.get("selected_trip"), scenario.get("selected_trip")),
+            "teleport_delta": scenario["teleport_count"] - baseline["teleport_count"],
+            "arrived_vehicle_delta": scenario["arrived_vehicle_count"] - baseline["arrived_vehicle_count"],
+            "edge_changes": edge_changes[:300],
+        },
+        "free_flow_validation": {
+            "network_free_flow_seconds": floor_seconds,
+            "minimum_allowed_seconds": round(minimum_allowed_seconds, 3),
+            "baseline_valid": baseline.get("selected_trip") is None or float(baseline["selected_trip"]["duration"]) >= minimum_allowed_seconds,
+            "scenario_valid": scenario.get("selected_trip") is None or float(scenario["selected_trip"]["duration"]) >= minimum_allowed_seconds,
+        },
+        "playback_available": True,
+        "assumptions": [
+            "Regional demand uses the local detector-fitted proxy OD model, not an observed regional trip table.",
+            "The baseline and closure runs use identical demand, sampling scale, and seed.",
+            "This regional run is mesoscopic; detailed signal phases and lane-changing near the closure require the affected-area microscopic phase.",
+        ],
+    }
+    _atomic_json(result_path, result)
+    _atomic_json(progress_path, {"status": "completed", "progress": 1.0, "sim_second": total_minutes * 60})
+    return 0
+
+
+def _accepted_mapping(edge_map: pd.DataFrame, app_edge_ids: set[str]) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    blocked: list[str] = []
+    for app_edge_id in sorted(app_edge_ids):
+        rows = edge_map.loc[edge_map["app_edge_id"].astype(str) == str(app_edge_id)]
+        statuses = set(rows["status"].astype(str))
+        ids = sorted(
+            str(value)
+            for value in rows.loc[rows["status"] == "accepted", "sumo_edge_id"].dropna().unique()
+        )
+        if statuses != {"accepted"} or not ids:
+            blocked.append(str(app_edge_id))
+        else:
+            result[str(app_edge_id)] = ids
+    if blocked:
+        raise ValueError("Closure simulation blocked by unaccepted edge mappings: " + ", ".join(blocked))
+    return result
+
+
+def _cached_demand_manifest(
+    manifest_path: Path, demand_directory: Path
+) -> dict[str, Any] | None:
+    route_path = demand_directory / "regional.rou.xml.gz"
+    if not manifest_path.is_file() or not route_path.is_file():
+        return None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest["artifacts"]["routes"]["sha256"] != _sha256(route_path):
+            return None
+        if manifest["sampling"]["gate_passed"] is not True:
+            return None
+        return manifest
+    except (KeyError, OSError, json.JSONDecodeError):
+        return None
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _run_variant(
+    *,
+    name: str,
+    closures: list[dict[str, Any]],
+    network_path: Path,
+    route_path: Path,
+    sumo_binary: str,
+    mapping: dict[str, list[str]],
+    payload: dict[str, Any],
+    run_dir: Path,
+    cancel_path: Path,
+    progress_path: Path,
+    max_visible: int,
+    deadline: float,
+    progress_start: float,
+    progress_span: float,
+) -> dict[str, Any]:
+    warmup_seconds = int(payload["warmup_minutes"]) * 60
+    analysis_seconds = int(payload["analysis_minutes"]) * 60
+    end_second = warmup_seconds + analysis_seconds
+    tripinfo_path = run_dir / f"{name}-tripinfo.xml"
+    command = [
+        sumo_binary,
+        "--net-file", str(network_path),
+        "--route-files", str(route_path),
+        "--tripinfo-output", str(tripinfo_path),
+        "--begin", "0",
+        "--end", str(end_second),
+        "--seed", str(payload["seed"]),
+        "--mesosim", "true",
+        "--device.rerouting.probability", "1",
+        "--device.rerouting.period", str(payload["reroute_period_seconds"]),
+        "--device.rerouting.adaptation-steps", "6",
+        "--time-to-teleport", "300",
+        "--no-step-log", "true",
+        "--no-warnings", "true",
+    ]
+    libsumo.start(command)
+    selected_id = "selected-trip"
+    selected_initial_route: list[str] = []
+    selected_final_route: list[str] = []
+    last_selected_route: list[str] = []
+    frames: list[dict[str, Any]] = []
+    traveled: list[list[float]] = []
+    edge_totals: dict[str, dict[str, Any]] = {}
+    departed = 0
+    arrived = 0
+    teleports = 0
+    restriction_state: dict[int, bool] = {}
+    originals: dict[str, tuple[list[str], float]] = {}
+    last_projected: list[list[float]] = []
+    try:
+        route = _find_selected_route(
+            mapping[str(payload["origin_app_edge_id"])],
+            mapping[str(payload["destination_app_edge_id"])],
+        )
+        selected_initial_route = route
+        libsumo.route.add(f"{name}-selected-route", route)
+        libsumo.vehicle.add(
+            selected_id,
+            f"{name}-selected-route",
+            typeID="passenger_sov",
+            depart=str(warmup_seconds),
+        )
+        for sim_second in range(0, end_second + 1):
+            if cancel_path.exists() or time.monotonic() > deadline:
+                return {"status": "cancelled", "frames": [], "edge_stats": {}}
+            libsumo.simulationStep()
+            now = int(round(float(libsumo.simulation.getTime())))
+            departed += int(libsumo.simulation.getDepartedNumber())
+            arrived += int(libsumo.simulation.getArrivedNumber())
+            teleports += len(libsumo.simulation.getStartingTeleportIDList())
+            if closures:
+                changed = _sync_restrictions(
+                    closures, mapping, payload["departure_time"], warmup_seconds,
+                    now, restriction_state, originals,
+                )
+                if changed:
+                    _reroute_active_vehicles()
+            active = list(libsumo.vehicle.getIDList())
+            if now >= warmup_seconds and now % int(payload["aggregate_interval_seconds"]) == 0:
+                _capture_edge_stats(active, edge_totals)
+            if now >= warmup_seconds and now % int(payload["frame_interval_seconds"]) == 0:
+                frame, last_projected = _capture_frame(
+                    active, selected_id, max_visible, traveled, last_projected,
+                    now - warmup_seconds,
+                )
+                frames.append(frame)
+                if frame["selected_route_edges"]:
+                    last_selected_route = list(frame["selected_route_edges"])
+            progress = progress_start + progress_span * min(now / max(end_second, 1), 1)
+            if now % 10 == 0:
+                _atomic_json(
+                    progress_path,
+                    {"status": "running", "stage": name, "sim_second": now, "progress": progress},
+                )
+        if selected_id in set(libsumo.vehicle.getIDList()):
+            selected_final_route = list(libsumo.vehicle.getRoute(selected_id))
+        elif last_selected_route:
+            selected_final_route = last_selected_route
+    finally:
+        libsumo.close()
+    trip = None
+    try:
+        trip = parse_tripinfo(tripinfo_path, selected_id)
+    except (ValueError, OSError):
+        pass
+    return {
+        "status": "completed",
+        "selected_trip": trip,
+        "selected_initial_route_edge_count": len(selected_initial_route),
+        "selected_final_route_edge_count": len(selected_final_route),
+        "selected_initial_route_hash": _route_hash(selected_initial_route),
+        "selected_final_route_hash": _route_hash(selected_final_route),
+        "selected_trip_rerouted": bool(selected_final_route and selected_final_route != selected_initial_route),
+        "departed_vehicle_count": departed,
+        "arrived_vehicle_count": arrived,
+        "teleport_count": teleports,
+        "remaining_vehicle_count": int(libsumo.simulation.getMinExpectedNumber()) if False else 0,
+        "frames": frames,
+        "edge_stats": dict(edge_totals),
+    }
+
+
+def _find_selected_route(origins: list[str], destinations: list[str]) -> list[str]:
+    for origin in origins:
+        for destination in destinations:
+            route = libsumo.simulation.findRoute(origin, destination, vType="passenger_sov")
+            if route.edges:
+                return list(route.edges)
+    raise ValueError("SUMO could not route the selected trip between accepted edge mappings")
+
+
+def _sync_restrictions(
+    closures: list[dict[str, Any]],
+    mapping: dict[str, list[str]],
+    departure_iso: str,
+    warmup_seconds: int,
+    sim_second: int,
+    state: dict[int, bool],
+    originals: dict[str, tuple[list[str], float]],
+) -> bool:
+    departure = datetime.fromisoformat(departure_iso)
+    simulation_start = departure - timedelta(seconds=warmup_seconds)
+    changed = False
+    for index, closure in enumerate(closures):
+        starts = datetime.fromisoformat(closure["starts_at"]) if closure.get("starts_at") else None
+        ends = datetime.fromisoformat(closure["ends_at"]) if closure.get("ends_at") else None
+        active = starts is None or (simulation_start + timedelta(seconds=sim_second) >= starts and simulation_start + timedelta(seconds=sim_second) < ends)
+        if state.get(index) == active:
+            continue
+        sumo_edges = [edge for app in closure["app_edge_ids"] for edge in mapping[str(app)]]
+        if active:
+            _apply_restriction(closure, sumo_edges, originals)
+        else:
+            _restore_restriction(sumo_edges, originals)
+        state[index] = active
+        changed = True
+    return changed
+
+
+def _apply_restriction(
+    closure: dict[str, Any], edge_ids: list[str], originals: dict[str, tuple[list[str], float]]
+) -> None:
+    for edge_id in edge_ids:
+        lane_count = libsumo.edge.getLaneNumber(edge_id)
+        for lane_index in range(lane_count):
+            lane_id = f"{edge_id}_{lane_index}"
+            originals.setdefault(
+                lane_id,
+                (list(libsumo.lane.getAllowed(lane_id)), float(libsumo.lane.getMaxSpeed(lane_id))),
+            )
+            kind = closure["restriction_type"]
+            if kind == "full":
+                libsumo.lane.setDisallowed(lane_id, VEHICLE_CLASSES)
+            elif kind == "lane" and lane_index >= int(closure["remaining_lanes"]):
+                libsumo.lane.setDisallowed(lane_id, VEHICLE_CLASSES)
+            elif kind == "speed":
+                libsumo.lane.setMaxSpeed(lane_id, float(closure["speed_limit_kph"]) / 3.6)
+
+
+def _restore_restriction(edge_ids: list[str], originals: dict[str, tuple[list[str], float]]) -> None:
+    for edge_id in edge_ids:
+        for lane_index in range(libsumo.edge.getLaneNumber(edge_id)):
+            lane_id = f"{edge_id}_{lane_index}"
+            original = originals.get(lane_id)
+            if original is None:
+                continue
+            libsumo.lane.setAllowed(lane_id, original[0])
+            libsumo.lane.setMaxSpeed(lane_id, original[1])
+
+
+def _reroute_active_vehicles() -> None:
+    for vehicle_id in libsumo.vehicle.getIDList():
+        try:
+            libsumo.vehicle.rerouteTraveltime(vehicle_id)
+        except libsumo.TraCIException:
+            continue
+
+
+def _capture_edge_stats(vehicle_ids: list[str], totals: dict[str, dict[str, Any]]) -> None:
+    grouped: dict[str, list[float]] = defaultdict(list)
+    for vehicle_id in vehicle_ids:
+        try:
+            edge_id = libsumo.vehicle.getRoadID(vehicle_id)
+            if edge_id and not edge_id.startswith(":"):
+                grouped[edge_id].append(float(libsumo.vehicle.getSpeed(vehicle_id)))
+        except libsumo.TraCIException:
+            continue
+    for edge_id, speeds in grouped.items():
+        record = totals.setdefault(
+            edge_id,
+            {"count_total": 0.0, "speed_total": 0.0, "samples": 0, "geometry": _edge_coordinates(edge_id)},
+        )
+        record["count_total"] += len(speeds)
+        record["speed_total"] += sum(speeds) / len(speeds)
+        record["samples"] += 1
+
+
+def _capture_frame(
+    vehicle_ids: list[str],
+    selected_id: str,
+    limit: int,
+    traveled: list[list[float]],
+    last_projected: list[list[float]],
+    elapsed: int,
+) -> tuple[dict[str, Any], list[list[float]]]:
+    background = [vehicle_id for vehicle_id in vehicle_ids if vehicle_id != selected_id]
+    sampled = sorted(background, key=_stable_vehicle_rank)[:limit]
+    agents: list[dict[str, Any]] = []
+    for vehicle_id in sampled:
+        try:
+            x, y = libsumo.vehicle.getPosition(vehicle_id)
+            lon, lat = libsumo.simulation.convertGeo(x, y)
+            speed = float(libsumo.vehicle.getSpeed(vehicle_id))
+            allowed = max(float(libsumo.vehicle.getAllowedSpeed(vehicle_id)), 0.1)
+            ratio = speed / allowed
+            agents.append({
+                "id": vehicle_id,
+                "coordinate": [round(lon, 6), round(lat, 6)],
+                "congestion": "heavy" if ratio < 0.35 else "slow" if ratio < 0.7 else "free",
+                "opacity": 0.82,
+            })
+        except (libsumo.TraCIException, KeyError):
+            continue
+    trip_coordinate = None
+    projected = last_projected
+    selected_route_edges: list[str] = []
+    if selected_id in set(vehicle_ids):
+        try:
+            x, y = libsumo.vehicle.getPosition(selected_id)
+            lon, lat = libsumo.simulation.convertGeo(x, y)
+            trip_coordinate = [round(lon, 6), round(lat, 6)]
+            if not traveled or traveled[-1] != trip_coordinate:
+                traveled.append(trip_coordinate)
+            route = list(libsumo.vehicle.getRoute(selected_id))
+            selected_route_edges = route
+            route_index = max(0, int(libsumo.vehicle.getRouteIndex(selected_id)))
+            projected = _route_coordinates(route[route_index:])
+        except (libsumo.TraCIException, KeyError):
+            pass
+    return ({
+        "elapsed_seconds": elapsed,
+        "agents": agents,
+        "trip_coordinate": trip_coordinate,
+        "traveled_route": list(traveled),
+        "projected_route": projected,
+        "selected_route_edges": selected_route_edges,
+    }, projected)
+
+
+def _stable_vehicle_rank(vehicle_id: str) -> str:
+    return hashlib.sha1(vehicle_id.encode("utf-8")).hexdigest()
+
+
+def _route_hash(edge_ids: list[str]) -> str | None:
+    if not edge_ids:
+        return None
+    return hashlib.sha256("\0".join(edge_ids).encode("utf-8")).hexdigest()[:20]
+
+
+def _route_coordinates(edge_ids: list[str]) -> list[list[float]]:
+    coordinates: list[list[float]] = []
+    for edge_id in edge_ids:
+        shape = libsumo.lane.getShape(f"{edge_id}_0")
+        for x, y in shape:
+            lon, lat = libsumo.simulation.convertGeo(x, y)
+            point = [round(lon, 6), round(lat, 6)]
+            if not coordinates or coordinates[-1] != point:
+                coordinates.append(point)
+    return coordinates
+
+
+def _edge_coordinates(edge_id: str) -> list[list[float]]:
+    try:
+        return _route_coordinates([edge_id])
+    except libsumo.TraCIException:
+        return []
+
+
+def _edge_changes(
+    edge_names: dict[str, str],
+    baseline: dict[str, dict[str, Any]],
+    scenario: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    changes: list[dict[str, Any]] = []
+    for edge_id in set(baseline) | set(scenario):
+        before = baseline.get(edge_id, {"count_total": 0, "speed_total": 0, "samples": 0, "geometry": []})
+        after = scenario.get(edge_id, {"count_total": 0, "speed_total": 0, "samples": 0, "geometry": []})
+        before_count = before["count_total"] / before["samples"] if before["samples"] else 0.0
+        after_count = after["count_total"] / after["samples"] if after["samples"] else 0.0
+        delta = after_count - before_count
+        if abs(delta) < 0.5:
+            continue
+        geometry = after["geometry"] or before["geometry"]
+        road_name = edge_names.get(edge_id, edge_id)
+        changes.append({
+            "sumo_edge_id": edge_id,
+            "road_name": road_name,
+            "baseline_mean_active_vehicles": round(before_count, 3),
+            "scenario_mean_active_vehicles": round(after_count, 3),
+            "change_mean_active_vehicles": round(delta, 3),
+            "baseline_mean_speed_mps": round(before["speed_total"] / before["samples"], 3) if before["samples"] else None,
+            "scenario_mean_speed_mps": round(after["speed_total"] / after["samples"], 3) if after["samples"] else None,
+            "geometry": {"type": "LineString", "coordinates": geometry},
+        })
+    return sorted(changes, key=lambda item: abs(item["change_mean_active_vehicles"]), reverse=True)
+
+
+def _trip_delta(baseline: dict[str, Any] | None, scenario: dict[str, Any] | None) -> float | None:
+    if not baseline or not scenario:
+        return None
+    return round(float(scenario["duration"]) - float(baseline["duration"]), 3)
