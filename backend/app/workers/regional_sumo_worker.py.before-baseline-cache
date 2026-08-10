@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import argparse
 import gc
 import gzip
 import hashlib
 import json
 import os
-import subprocess
-import sys
-import traceback
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -168,18 +164,15 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
     del edge_map
     gc.collect()
 
-    # The regional orchestrator deliberately does NOT import libsumo.
-    # Each SUMO variant runs in its own child Python process so exiting the
-    # child forces macOS to reclaim all libsumo/native allocator memory.
+    # Import libsumo only after every Pandas/PyArrow artifact has been
+    # consumed and released. libsumo's GDAL/native dependencies otherwise
+    # coexist poorly with PyArrow in this macOS process.
+    global libsumo
+    import libsumo
 
     if cancel_path.exists():
         _atomic_json(result_path, {"status": "cancelled", "seed": seed})
         return 0
-
-    overall_deadline = (
-        time.monotonic()
-        + int(worker["max_run_seconds"])
-    )
 
     common = {
         "network_path": input_paths["network_path"],
@@ -191,79 +184,17 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
         "cancel_path": cancel_path,
         "progress_path": progress_path,
         "max_visible": int(worker["max_visible_vehicles"]),
+        "deadline": time.monotonic() + int(worker["max_run_seconds"]),
     }
-    # A baseline depends on the network, demand, selected trip, seed and
-    # physical-model settings, but NOT on the closure definition. Reuse an
-    # identical completed baseline instead of running SUMO again.
-    baseline_cache_allowed = not bool(
-        os.getenv("COMMUTE_HELP_SUMO_PROFILE_SECONDS", "").strip()
-    )
-
-    baseline_cache_root = (
-        input_paths["demand_cache_directory"].parent
-        / "baseline-cache"
-    )
-    baseline_cache_root.mkdir(parents=True, exist_ok=True)
-
-    baseline_cache_key = _baseline_cache_key(
-        payload=payload,
-        worker=worker,
-        mapping=mapping,
-        input_paths=input_paths,
-        demand_manifest=demand_manifest,
-    )
-    baseline_cache_path = (
-        baseline_cache_root
-        / f"{baseline_cache_key}.json.gz"
-    )
-
-    baseline = (
-        _load_baseline_cache(
-            baseline_cache_path,
-            baseline_cache_key,
-        )
-        if baseline_cache_allowed
-        else None
-    )
-
-    baseline_cache_hit = baseline is not None
-
-    if baseline_cache_hit:
-        _atomic_json(
-            progress_path,
-            {
-                "status": "running",
-                "stage": "baseline_cache_hit",
-                "sim_second": total_minutes * 60,
-                "progress": 0.52,
-            },
-        )
-    else:
-        baseline = _run_variant_process(
-            name="baseline",
-            closures=[],
-            progress_start=0.10,
-            progress_span=0.42,
-            max_seconds=_remaining_run_seconds(
-                overall_deadline
-            ),
-            **common,
-        )
-
+    baseline = _run_variant(name="baseline", closures=[], progress_start=0.10, progress_span=0.42, **common)
     if baseline["status"] == "cancelled":
-        _atomic_json(
-            result_path,
-            {"status": "cancelled", "seed": seed},
-        )
+        _atomic_json(result_path, {"status": "cancelled", "seed": seed})
         return 0
-    scenario = _run_variant_process(
+    scenario = _run_variant(
         name="scenario",
         closures=payload["closures"],
         progress_start=0.52,
         progress_span=0.47,
-        max_seconds=_remaining_run_seconds(
-            overall_deadline
-        ),
         **common,
     )
     if scenario["status"] == "cancelled":
@@ -320,16 +251,6 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
                 f"SUMO-native physical free-flow floor"
             )
 
-    if (
-        baseline_cache_allowed
-        and not baseline_cache_hit
-    ):
-        _write_baseline_cache(
-            baseline_cache_path,
-            baseline_cache_key,
-            baseline,
-        )
-
     # Baseline playback is intentionally not recorded. Scenario frames
     # were spilled to bounded gzip chunks during simulation. Assemble the
     # compatibility playback.json by streaming those chunks directly to
@@ -366,8 +287,6 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
         "status": "completed",
         "evidence_level": "modeled_uncalibrated",
         "seed": seed,
-        "baseline_cache_hit": baseline_cache_hit,
-        "baseline_cache_key": baseline_cache_key,
         "demand_version": demand_manifest["demand_version"],
         "demand_model_version": demand_manifest["source"]["model"]["version"],
         "real_vehicles_per_simulated_vehicle": scale,
@@ -418,173 +337,6 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
     return 0
 
 
-
-BASELINE_CACHE_SCHEMA_VERSION = 1
-
-
-def _baseline_cache_key(
-    *,
-    payload: dict[str, Any],
-    worker: dict[str, Any],
-    mapping: dict[str, list[str]],
-    input_paths: dict[str, Path],
-    demand_manifest: dict[str, Any],
-) -> str:
-    """Return a deterministic key for closure-independent baseline state."""
-
-    origin_id = str(payload["origin_app_edge_id"])
-    destination_id = str(payload["destination_app_edge_id"])
-
-    sumo_binary = Path(str(worker["sumo_binary"])).resolve()
-    try:
-        sumo_stat = sumo_binary.stat()
-        sumo_binary_identity = {
-            "path": str(sumo_binary),
-            "size": sumo_stat.st_size,
-            "mtime_ns": sumo_stat.st_mtime_ns,
-        }
-    except OSError:
-        sumo_binary_identity = {
-            "path": str(sumo_binary),
-            "size": None,
-            "mtime_ns": None,
-        }
-
-    source = {
-        "schema_version": BASELINE_CACHE_SCHEMA_VERSION,
-
-        # Any worker-code change automatically invalidates old baselines.
-        "regional_worker_sha256": _sha256(
-            Path(__file__).resolve()
-        ),
-
-        "network_manifest_sha256": _sha256(
-            input_paths["network_manifest_path"]
-        ),
-        "graph_manifest_sha256": _sha256(
-            input_paths["graph_manifest_path"]
-        ),
-
-        "sumo_binary": sumo_binary_identity,
-
-        "demand_version": demand_manifest["demand_version"],
-        "demand_route_sha256": demand_manifest[
-            "artifacts"
-        ]["routes"]["sha256"],
-
-        "departure_time": payload["departure_time"],
-
-        "origin_app_edge_id": origin_id,
-        "destination_app_edge_id": destination_id,
-        "origin_sumo_edges": mapping[origin_id],
-        "destination_sumo_edges": mapping[destination_id],
-
-        "warmup_minutes": int(payload["warmup_minutes"]),
-        "analysis_minutes": int(payload["analysis_minutes"]),
-        "real_vehicles_per_simulated_vehicle": float(
-            payload["real_vehicles_per_simulated_vehicle"]
-        ),
-        "seed": int(payload["seed"]),
-
-        "reroute_period_seconds": int(
-            payload["reroute_period_seconds"]
-        ),
-        "aggregate_interval_seconds": int(
-            payload["aggregate_interval_seconds"]
-        ),
-        "frame_interval_seconds": int(
-            payload["frame_interval_seconds"]
-        ),
-    }
-
-    return hashlib.sha256(
-        json.dumps(
-            source,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()[:32]
-
-
-def _load_baseline_cache(
-    path: Path,
-    expected_key: str,
-) -> dict[str, Any] | None:
-    if not path.is_file():
-        return None
-
-    try:
-        with gzip.open(
-            path,
-            "rt",
-            encoding="utf-8",
-        ) as source:
-            cached = json.load(source)
-
-        if (
-            cached.get("schema_version")
-            != BASELINE_CACHE_SCHEMA_VERSION
-        ):
-            return None
-
-        if cached.get("cache_key") != expected_key:
-            return None
-
-        baseline = cached.get("baseline")
-
-        if (
-            not isinstance(baseline, dict)
-            or baseline.get("status") != "completed"
-            or "edge_stats" not in baseline
-            or "selected_free_flow_seconds" not in baseline
-        ):
-            return None
-
-        return baseline
-
-    except (
-        OSError,
-        EOFError,
-        KeyError,
-        TypeError,
-        ValueError,
-        json.JSONDecodeError,
-    ):
-        return None
-
-
-def _write_baseline_cache(
-    path: Path,
-    cache_key: str,
-    baseline: dict[str, Any],
-) -> None:
-    """Persist a validated baseline atomically as compressed JSON."""
-
-    temporary = path.with_suffix(
-        path.suffix + ".part"
-    )
-
-    value = {
-        "schema_version": BASELINE_CACHE_SCHEMA_VERSION,
-        "cache_key": cache_key,
-        "baseline": baseline,
-    }
-
-    with gzip.open(
-        temporary,
-        "wt",
-        encoding="utf-8",
-        compresslevel=1,
-    ) as output:
-        json.dump(
-            value,
-            output,
-            separators=(",", ":"),
-        )
-
-    os.replace(temporary, path)
-
-
 def _accepted_mapping(edge_map: pd.DataFrame, app_edge_ids: set[str]) -> dict[str, list[str]]:
     result: dict[str, list[str]] = {}
     blocked: list[str] = []
@@ -627,296 +379,6 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-
-def _remaining_run_seconds(
-    deadline: float,
-) -> int:
-    remaining = int(deadline - time.monotonic())
-
-    if remaining < 1:
-        raise TimeoutError(
-            "Regional SUMO comparison exceeded its "
-            "maximum wall-clock runtime"
-        )
-
-    return remaining
-
-
-def _write_variant_result(
-    path: Path,
-    value: dict[str, Any],
-) -> None:
-    temporary = path.with_suffix(
-        path.suffix + ".part"
-    )
-
-    with gzip.open(
-        temporary,
-        "wt",
-        encoding="utf-8",
-        compresslevel=1,
-    ) as output:
-        json.dump(
-            value,
-            output,
-            separators=(",", ":"),
-        )
-
-    os.replace(temporary, path)
-
-
-def _read_variant_result(
-    path: Path,
-) -> dict[str, Any]:
-    with gzip.open(
-        path,
-        "rt",
-        encoding="utf-8",
-    ) as source:
-        result = json.load(source)
-
-    if not isinstance(result, dict):
-        raise ValueError(
-            f"Invalid SUMO variant result: {path}"
-        )
-
-    return result
-
-
-def _run_variant_process(
-    *,
-    name: str,
-    closures: list[dict[str, Any]],
-    network_path: Path,
-    route_path: Path,
-    sumo_binary: str,
-    mapping: dict[str, list[str]],
-    payload: dict[str, Any],
-    run_dir: Path,
-    cancel_path: Path,
-    progress_path: Path,
-    max_visible: int,
-    progress_start: float,
-    progress_span: float,
-    max_seconds: int,
-) -> dict[str, Any]:
-    """Run one SUMO variant in a disposable Python process."""
-
-    child_request_path = (
-        run_dir / f"{name}-variant-request.json"
-    )
-    child_result_path = (
-        run_dir / f"{name}-variant-result.json.gz"
-    )
-    child_stdout_path = (
-        run_dir / f"{name}-variant.stdout.log"
-    )
-    child_stderr_path = (
-        run_dir / f"{name}-variant.stderr.log"
-    )
-
-    if child_result_path.exists():
-        child_result_path.unlink()
-
-    child_request = {
-        "name": name,
-        "closures": closures,
-        "network_path": str(network_path),
-        "route_path": str(route_path),
-        "sumo_binary": sumo_binary,
-        "mapping": mapping,
-        "payload": payload,
-        "run_dir": str(run_dir),
-        "cancel_path": str(cancel_path),
-        "progress_path": str(progress_path),
-        "max_visible": int(max_visible),
-        "progress_start": float(progress_start),
-        "progress_span": float(progress_span),
-        "max_seconds": int(max_seconds),
-        "result_path": str(child_result_path),
-    }
-
-    _atomic_json(
-        child_request_path,
-        child_request,
-    )
-
-    command = [
-        sys.executable,
-        "-m",
-        "backend.app.workers.regional_sumo_worker",
-        "--variant-request",
-        str(child_request_path),
-    ]
-
-    try:
-        with (
-            child_stdout_path.open(
-                "w",
-                encoding="utf-8",
-            ) as stdout,
-            child_stderr_path.open(
-                "w",
-                encoding="utf-8",
-            ) as stderr,
-        ):
-            completed = subprocess.run(
-                command,
-                cwd=Path.cwd(),
-                stdout=stdout,
-                stderr=stderr,
-                text=True,
-                timeout=max_seconds + 120,
-                check=False,
-            )
-
-    except subprocess.TimeoutExpired as error:
-        raise TimeoutError(
-            f"{name} SUMO child exceeded its "
-            "wall-clock runtime"
-        ) from error
-
-    if not child_result_path.is_file():
-        detail = ""
-
-        try:
-            stderr_text = child_stderr_path.read_text(
-                encoding="utf-8"
-            )
-            detail = stderr_text[-4000:].strip()
-        except OSError:
-            pass
-
-        raise RuntimeError(
-            f"{name} SUMO child exited with code "
-            f"{completed.returncode} without producing "
-            f"a result"
-            + (f": {detail}" if detail else "")
-        )
-
-    result = _read_variant_result(
-        child_result_path
-    )
-
-    if result.get("status") == "failed":
-        raise RuntimeError(
-            str(
-                result.get(
-                    "error",
-                    f"{name} SUMO child failed",
-                )
-            )
-        )
-
-    if completed.returncode != 0:
-        raise RuntimeError(
-            f"{name} SUMO child exited with code "
-            f"{completed.returncode}"
-        )
-
-    return result
-
-
-def _run_variant_child(
-    request_path: Path,
-) -> int:
-    """Entry point for one disposable libsumo process."""
-
-    request = json.loads(
-        request_path.read_text(
-            encoding="utf-8"
-        )
-    )
-
-    result_path = Path(
-        request["result_path"]
-    ).resolve()
-
-    try:
-        run_dir = Path(
-            request["run_dir"]
-        ).resolve()
-
-        if not _inside(
-            run_dir,
-            Path.cwd().resolve(),
-        ):
-            raise ValueError(
-                "Variant run directory must remain "
-                "inside the local repository"
-            )
-
-        # Import libsumo ONLY in this child process.
-        global libsumo
-        import libsumo
-
-        result = _run_variant(
-            name=str(request["name"]),
-            closures=list(request["closures"]),
-            network_path=Path(
-                request["network_path"]
-            ).resolve(),
-            route_path=Path(
-                request["route_path"]
-            ).resolve(),
-            sumo_binary=str(
-                request["sumo_binary"]
-            ),
-            mapping={
-                str(key): [
-                    str(value)
-                    for value in values
-                ]
-                for key, values
-                in request["mapping"].items()
-            },
-            payload=dict(request["payload"]),
-            run_dir=run_dir,
-            cancel_path=Path(
-                request["cancel_path"]
-            ).resolve(),
-            progress_path=Path(
-                request["progress_path"]
-            ).resolve(),
-            max_visible=int(
-                request["max_visible"]
-            ),
-            deadline=(
-                time.monotonic()
-                + int(request["max_seconds"])
-            ),
-            progress_start=float(
-                request["progress_start"]
-            ),
-            progress_span=float(
-                request["progress_span"]
-            ),
-        )
-
-        _write_variant_result(
-            result_path,
-            result,
-        )
-
-        return 0
-
-    except Exception as error:
-        traceback.print_exc()
-
-        try:
-            _write_variant_result(
-                result_path,
-                {
-                    "status": "failed",
-                    "error": str(error),
-                },
-            )
-        except Exception:
-            traceback.print_exc()
-
-        return 1
 
 
 def _run_variant(
@@ -2006,27 +1468,3 @@ def _trip_delta(baseline: dict[str, Any] | None, scenario: dict[str, Any] | None
     if not baseline or not scenario:
         return None
     return round(float(scenario["duration"]) - float(baseline["duration"]), 3)
-
-
-
-def _variant_cli() -> int:
-    parser = argparse.ArgumentParser(
-        description=(
-            "Run one isolated regional SUMO variant."
-        )
-    )
-    parser.add_argument(
-        "--variant-request",
-        type=Path,
-        required=True,
-    )
-
-    args = parser.parse_args()
-
-    return _run_variant_child(
-        args.variant_request.resolve()
-    )
-
-
-if __name__ == "__main__":
-    raise SystemExit(_variant_cli())

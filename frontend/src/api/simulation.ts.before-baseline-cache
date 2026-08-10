@@ -50,8 +50,6 @@ export type RegionalSimulationSummary = {
   demand_model_version: string
   real_vehicles_per_simulated_vehicle: number
   represented_real_vehicle_trips: number
-  baseline_cache_hit: boolean
-  baseline_cache_key: string
   baseline: PhysicalRunMetrics
   scenario: PhysicalRunMetrics
   comparison: {
@@ -61,11 +59,8 @@ export type RegionalSimulationSummary = {
     edge_changes: PhysicalEdgeChange[]
   }
   free_flow_validation: {
-    graph_reference_free_flow_seconds: number
-    baseline_sumo_free_flow_seconds: number
-    scenario_sumo_free_flow_seconds: number
-    baseline_minimum_allowed_seconds: number
-    scenario_minimum_allowed_seconds: number
+    network_free_flow_seconds: number
+    minimum_allowed_seconds: number
     baseline_valid: boolean
     scenario_valid: boolean
   }

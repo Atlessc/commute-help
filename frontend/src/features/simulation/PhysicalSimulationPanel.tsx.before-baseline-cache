@@ -68,7 +68,7 @@ export function PhysicalSimulationPanel({ origin, destination, closure, onResult
         <span className="evidence-badge evidence-badge--modeled_uncalibrated">Modeled · uncalibrated</span>
       </div>
       <p className="panel-intro">
-        Compares each closure run against the same local background demand and selected trip, reusing an identical completed baseline when one is already cached.
+        Runs the same local background demand twice—first normally, then with every selected closure—and tracks your trip through both populations.
       </p>
       <div className="diversion-controls">
         <label>Traffic warmup
@@ -128,8 +128,7 @@ function SimulationMetrics({ status }: { status: SimulationRunStatus }) {
         <Metric label="Scenario teleports" value={summary.scenario.teleport_count.toLocaleString()} />
         <Metric label="Simulated vehicles" value={summary.scenario.departed_vehicle_count.toLocaleString()} />
         <Metric label="Changed roads" value={summary.comparison.edge_changes.length.toLocaleString()} />
-        <Metric label="SUMO free-flow floor" value={duration(summary.free_flow_validation.baseline_sumo_free_flow_seconds)} />
-        <Metric label="Baseline source" value={summary.baseline_cache_hit ? 'Cached' : 'Fresh run'} />
+        <Metric label="Free-flow floor" value={duration(summary.free_flow_validation.network_free_flow_seconds)} />
       </div>
       <p className="result-note">Local proxy {summary.demand_model_version} · seed {summary.seed} · physical scale {summary.real_vehicles_per_simulated_vehicle}:1</p>
       <ul className="assumption-list">{summary.assumptions.map((item) => <li key={item}>{item}</li>)}</ul>
