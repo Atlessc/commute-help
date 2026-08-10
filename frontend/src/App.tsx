@@ -723,6 +723,13 @@ function App() {
   const graphReady = system.data?.graph.status === 'ready'
   const currentClosureComparison = buildClosureComparison()
   const currentClosureKey = closureComparisonKey(currentClosureComparison)
+  const currentPhysicalSimulationKey = [
+    currentClosureKey,
+    origin?.edge.edge_id ?? '',
+    origin?.node_id ?? '',
+    destination?.edge.edge_id ?? '',
+    destination?.node_id ?? '',
+  ].join('|')
   const comparisonIsCurrent =
     routeMutation.data !== undefined &&
     lastComparisonKey === currentClosureKey
@@ -746,7 +753,7 @@ function App() {
     ? alternativesMutation.data.routes
     : []
   const currentPhysicalSimulation =
-    physicalSimulationSnapshot?.comparisonKey === currentClosureKey
+    physicalSimulationSnapshot?.comparisonKey === currentPhysicalSimulationKey
       ? physicalSimulationSnapshot
       : null
   const activeStep = currentScenario
@@ -1078,13 +1085,13 @@ function App() {
                 >
                   <summary>{currentPhysicalSimulation ? 'Model settings and rerun' : 'Set up the simulation'}</summary>
                   <PhysicalSimulationPanel
-                    key={currentClosureKey}
+                    key={currentPhysicalSimulationKey}
                     origin={origin}
                     destination={destination}
                     closure={currentClosureComparison}
                     onResult={(status, playback) => {
                       if (status?.summary && playback) {
-                        setPhysicalSimulationSnapshot({ comparisonKey: currentClosureKey, status, playback })
+                        setPhysicalSimulationSnapshot({ comparisonKey: currentPhysicalSimulationKey, status, playback })
                         setSimulationElapsedSeconds(0)
                         setSimulationPlaying(false)
                         setOpenModule(4)

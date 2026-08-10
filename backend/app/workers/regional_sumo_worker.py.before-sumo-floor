@@ -201,54 +201,13 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
         _atomic_json(result_path, {"status": "cancelled", "seed": seed})
         return 0
 
-    # Validate SUMO output against SUMO's own free-flow route rather
-    # than the app graph's node-to-node floor. The selected SUMO trip
-    # begins/ends on mapped SUMO edges, so the NetworkX floor is useful
-    # as a diagnostic but is not an apples-to-apples hard rejection.
-    graph_floor_seconds = float(worker["free_flow_floor_seconds"])
-
-    validation: dict[str, dict[str, float | bool]] = {}
-
-    for label, variant in (
-        ("baseline", baseline),
-        ("scenario", scenario),
-    ):
+    floor_seconds = float(worker["free_flow_floor_seconds"])
+    minimum_allowed_seconds = max(0.1, floor_seconds * 0.97)
+    for label, variant in (("baseline", baseline), ("scenario", scenario)):
         trip = variant.get("selected_trip")
-        sumo_floor_seconds = float(
-            variant["selected_free_flow_seconds"]
-        )
-
-        tolerance_seconds = max(
-            5.0,
-            sumo_floor_seconds * 0.03,
-        )
-        minimum_allowed_seconds = max(
-            0.1,
-            sumo_floor_seconds - tolerance_seconds,
-        )
-
-        valid = (
-            trip is None
-            or float(trip["duration"])
-            >= minimum_allowed_seconds
-        )
-
-        validation[label] = {
-            "sumo_free_flow_seconds": round(
-                sumo_floor_seconds,
-                3,
-            ),
-            "minimum_allowed_seconds": round(
-                minimum_allowed_seconds,
-                3,
-            ),
-            "valid": valid,
-        }
-
-        if not valid:
+        if trip and float(trip["duration"]) < minimum_allowed_seconds:
             raise ValueError(
-                f"{label} selected trip violated the "
-                f"SUMO-native physical free-flow floor"
+                f"{label} selected trip violated the physical free-flow floor"
             )
 
     playback = {
@@ -283,28 +242,10 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
             "edge_changes": edge_changes[:300],
         },
         "free_flow_validation": {
-            "graph_reference_free_flow_seconds": round(
-                graph_floor_seconds,
-                3,
-            ),
-            "baseline_sumo_free_flow_seconds": validation[
-                "baseline"
-            ]["sumo_free_flow_seconds"],
-            "scenario_sumo_free_flow_seconds": validation[
-                "scenario"
-            ]["sumo_free_flow_seconds"],
-            "baseline_minimum_allowed_seconds": validation[
-                "baseline"
-            ]["minimum_allowed_seconds"],
-            "scenario_minimum_allowed_seconds": validation[
-                "scenario"
-            ]["minimum_allowed_seconds"],
-            "baseline_valid": validation[
-                "baseline"
-            ]["valid"],
-            "scenario_valid": validation[
-                "scenario"
-            ]["valid"],
+            "network_free_flow_seconds": floor_seconds,
+            "minimum_allowed_seconds": round(minimum_allowed_seconds, 3),
+            "baseline_valid": baseline.get("selected_trip") is None or float(baseline["selected_trip"]["duration"]) >= minimum_allowed_seconds,
+            "scenario_valid": scenario.get("selected_trip") is None or float(scenario["selected_trip"]["duration"]) >= minimum_allowed_seconds,
         },
         "playback_available": True,
         "assumptions": [
@@ -482,7 +423,7 @@ def _run_variant(
     last_projected: list[list[float]] = []
 
     try:
-        route, selected_free_flow_seconds = _find_selected_route(
+        route = _find_selected_route(
             mapping[str(payload["origin_app_edge_id"])],
             mapping[str(payload["destination_app_edge_id"])],
         )
@@ -684,10 +625,6 @@ def _run_variant(
     return {
         "status": "completed",
         "selected_trip": trip,
-        "selected_free_flow_seconds": round(
-            float(selected_free_flow_seconds),
-            3,
-        ),
         "selected_initial_route_edge_count": len(
             selected_initial_route
         ),
@@ -716,40 +653,13 @@ def _run_variant(
         "edge_stats": dict(edge_totals),
     }
 
-def _find_selected_route(
-    origins: list[str],
-    destinations: list[str],
-) -> tuple[list[str], float]:
-    best_route: list[str] | None = None
-    best_travel_time: float | None = None
-
+def _find_selected_route(origins: list[str], destinations: list[str]) -> list[str]:
     for origin in origins:
         for destination in destinations:
-            stage = libsumo.simulation.findRoute(
-                origin,
-                destination,
-                vType="passenger_sov",
-            )
-
-            if not stage.edges:
-                continue
-
-            travel_time = float(stage.travelTime)
-
-            if (
-                best_travel_time is None
-                or travel_time < best_travel_time
-            ):
-                best_route = list(stage.edges)
-                best_travel_time = travel_time
-
-    if best_route is None or best_travel_time is None:
-        raise ValueError(
-            "SUMO could not route the selected trip between "
-            "accepted edge mappings"
-        )
-
-    return best_route, best_travel_time
+            route = libsumo.simulation.findRoute(origin, destination, vType="passenger_sov")
+            if route.edges:
+                return list(route.edges)
+    raise ValueError("SUMO could not route the selected trip between accepted edge mappings")
 
 
 def _sync_restrictions(

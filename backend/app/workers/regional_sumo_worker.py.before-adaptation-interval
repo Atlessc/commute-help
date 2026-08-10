@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import gc
-import gzip
 import hashlib
 import json
 import os
@@ -11,7 +9,6 @@ import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
-from xml.etree import ElementTree as ET
 from typing import Any
 
 import pandas as pd
@@ -131,17 +128,19 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
             if not manifest_path.is_file():
                 raise
         demand_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    # Finish all Pandas/PyArrow work BEFORE importing libsumo.
-    #
-    # Keeping Arrow-backed DataFrames alive after libsumo starts has caused
-    # extremely expensive native memory cleanup pauses on macOS. Convert the
-    # edge mapping into ordinary Python structures, release the DataFrame,
-    # and force cleanup before SUMO begins.
+    # Import libsumo only after every GeoPandas/PyArrow demand artifact has
+    # been read and written. libsumo's GDAL registration otherwise collides
+    # with PyArrow's local filesystem factory in this macOS environment.
+    global libsumo
+    import libsumo
+    if cancel_path.exists():
+        _atomic_json(result_path, {"status": "cancelled", "seed": seed})
+        return 0
+
     edge_map = pd.read_parquet(
         input_paths["edge_map_path"],
         columns=["app_edge_id", "sumo_edge_id", "status", "road_name"],
     )
-
     app_edge_ids = {
         payload["origin_app_edge_id"],
         payload["destination_app_edge_id"],
@@ -151,29 +150,11 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
             for edge_id in closure["app_edge_ids"]
         ),
     }
-
     mapping = _accepted_mapping(edge_map, app_edge_ids)
-
     edge_names = {
         str(row.sumo_edge_id): str(row.road_name or row.sumo_edge_id)
         for row in edge_map.dropna(subset=["sumo_edge_id"]).itertuples()
     }
-
-    # From this point forward the SUMO worker only needs the plain-Python
-    # mapping/edge_names structures, not the Pandas/PyArrow DataFrame.
-    del edge_map
-    gc.collect()
-
-    # Import libsumo only after every Pandas/PyArrow artifact has been
-    # consumed and released. libsumo's GDAL/native dependencies otherwise
-    # coexist poorly with PyArrow in this macOS process.
-    global libsumo
-    import libsumo
-
-    if cancel_path.exists():
-        _atomic_json(result_path, {"status": "cancelled", "seed": seed})
-        return 0
-
     common = {
         "network_path": input_paths["network_path"],
         "route_path": demand_dir / "regional.rou.xml.gz",
@@ -201,54 +182,13 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
         _atomic_json(result_path, {"status": "cancelled", "seed": seed})
         return 0
 
-    # Validate SUMO output against SUMO's own free-flow route rather
-    # than the app graph's node-to-node floor. The selected SUMO trip
-    # begins/ends on mapped SUMO edges, so the NetworkX floor is useful
-    # as a diagnostic but is not an apples-to-apples hard rejection.
-    graph_floor_seconds = float(worker["free_flow_floor_seconds"])
-
-    validation: dict[str, dict[str, float | bool]] = {}
-
-    for label, variant in (
-        ("baseline", baseline),
-        ("scenario", scenario),
-    ):
+    floor_seconds = float(worker["free_flow_floor_seconds"])
+    minimum_allowed_seconds = max(0.1, floor_seconds * 0.97)
+    for label, variant in (("baseline", baseline), ("scenario", scenario)):
         trip = variant.get("selected_trip")
-        sumo_floor_seconds = float(
-            variant["selected_free_flow_seconds"]
-        )
-
-        tolerance_seconds = max(
-            5.0,
-            sumo_floor_seconds * 0.03,
-        )
-        minimum_allowed_seconds = max(
-            0.1,
-            sumo_floor_seconds - tolerance_seconds,
-        )
-
-        valid = (
-            trip is None
-            or float(trip["duration"])
-            >= minimum_allowed_seconds
-        )
-
-        validation[label] = {
-            "sumo_free_flow_seconds": round(
-                sumo_floor_seconds,
-                3,
-            ),
-            "minimum_allowed_seconds": round(
-                minimum_allowed_seconds,
-                3,
-            ),
-            "valid": valid,
-        }
-
-        if not valid:
+        if trip and float(trip["duration"]) < minimum_allowed_seconds:
             raise ValueError(
-                f"{label} selected trip violated the "
-                f"SUMO-native physical free-flow floor"
+                f"{label} selected trip violated the physical free-flow floor"
             )
 
     playback = {
@@ -283,28 +223,10 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
             "edge_changes": edge_changes[:300],
         },
         "free_flow_validation": {
-            "graph_reference_free_flow_seconds": round(
-                graph_floor_seconds,
-                3,
-            ),
-            "baseline_sumo_free_flow_seconds": validation[
-                "baseline"
-            ]["sumo_free_flow_seconds"],
-            "scenario_sumo_free_flow_seconds": validation[
-                "scenario"
-            ]["sumo_free_flow_seconds"],
-            "baseline_minimum_allowed_seconds": validation[
-                "baseline"
-            ]["minimum_allowed_seconds"],
-            "scenario_minimum_allowed_seconds": validation[
-                "scenario"
-            ]["minimum_allowed_seconds"],
-            "baseline_valid": validation[
-                "baseline"
-            ]["valid"],
-            "scenario_valid": validation[
-                "scenario"
-            ]["valid"],
+            "network_free_flow_seconds": floor_seconds,
+            "minimum_allowed_seconds": round(minimum_allowed_seconds, 3),
+            "baseline_valid": baseline.get("selected_trip") is None or float(baseline["selected_trip"]["duration"]) >= minimum_allowed_seconds,
+            "scenario_valid": scenario.get("selected_trip") is None or float(scenario["selected_trip"]["duration"]) >= minimum_allowed_seconds,
         },
         "playback_available": True,
         "assumptions": [
@@ -381,64 +303,8 @@ def _run_variant(
 ) -> dict[str, Any]:
     warmup_seconds = int(payload["warmup_minutes"]) * 60
     analysis_seconds = int(payload["analysis_minutes"]) * 60
-    requested_end_second = warmup_seconds + analysis_seconds
-
-    profile_raw = os.getenv("COMMUTE_HELP_SUMO_PROFILE_SECONDS", "").strip()
-    profile_seconds = int(profile_raw) if profile_raw else 0
-    profiling_enabled = profile_seconds > 0
-
-    end_second = (
-        min(requested_end_second, profile_seconds)
-        if profiling_enabled
-        else requested_end_second
-    )
-
-    timing_path = run_dir / f"{name}-timings.jsonl"
-    timing_buffer: list[dict[str, Any]] = []
-
-    if profiling_enabled and timing_path.exists():
-        timing_path.unlink()
-
-    def flush_timings() -> None:
-        if not profiling_enabled or not timing_buffer:
-            return
-
-        with timing_path.open("a", encoding="utf-8") as output:
-            for record in timing_buffer:
-                output.write(json.dumps(record, separators=(",", ":")) + "\n")
-
-        timing_buffer.clear()
-
+    end_second = warmup_seconds + analysis_seconds
     tripinfo_path = run_dir / f"{name}-tripinfo.xml"
-    # Full and lane closures are modeled with SUMO's native rerouter.
-    # Speed restrictions remain TraCI-managed because they do not invalidate
-    # route connectivity.
-    native_closures = [
-        closure
-        for closure in closures
-        if closure["restriction_type"] in {"full", "lane"}
-    ]
-    speed_closures = [
-        closure
-        for closure in closures
-        if closure["restriction_type"] == "speed"
-    ]
-
-    rerouter_path = None
-
-    if native_closures:
-        rerouter_path = _write_native_closure_rerouter(
-            run_dir=run_dir,
-            name=name,
-            network_path=network_path,
-            route_path=route_path,
-            closures=native_closures,
-            mapping=mapping,
-            departure_iso=payload["departure_time"],
-            warmup_seconds=warmup_seconds,
-            end_second=end_second,
-        )
-
     command = [
         sumo_binary,
         "--net-file", str(network_path),
@@ -448,25 +314,15 @@ def _run_variant(
         "--end", str(end_second),
         "--seed", str(payload["seed"]),
         "--mesosim", "true",
-        "--routing-algorithm", "astar",
         "--device.rerouting.probability", "1",
-        "--device.rerouting.mode", "8",
         "--device.rerouting.period", str(payload["reroute_period_seconds"]),
         "--device.rerouting.adaptation-steps", "6",
-        "--device.rerouting.adaptation-interval", "10",
-        "--device.rerouting.threads", "6",
+        "--device.rerouting.threads", "4",
         "--time-to-teleport", "300",
         "--no-step-log", "true",
         "--no-warnings", "true",
     ]
-
-    if rerouter_path is not None:
-        command.extend(
-            ["--additional-files", str(rerouter_path)]
-        )
-
     libsumo.start(command)
-
     selected_id = "selected-trip"
     selected_initial_route: list[str] = []
     selected_final_route: list[str] = []
@@ -480,14 +336,12 @@ def _run_variant(
     restriction_state: dict[int, bool] = {}
     originals: dict[str, tuple[list[str], float]] = {}
     last_projected: list[list[float]] = []
-
     try:
-        route, selected_free_flow_seconds = _find_selected_route(
+        route = _find_selected_route(
             mapping[str(payload["origin_app_edge_id"])],
             mapping[str(payload["destination_app_edge_id"])],
         )
         selected_initial_route = route
-
         libsumo.route.add(f"{name}-selected-route", route)
         libsumo.vehicle.add(
             selected_id,
@@ -495,261 +349,73 @@ def _run_variant(
             typeID="passenger_sov",
             depart=str(warmup_seconds),
         )
-
         for sim_second in range(0, end_second + 1):
             if cancel_path.exists() or time.monotonic() > deadline:
-                flush_timings()
-                return {
-                    "status": "cancelled",
-                    "frames": [],
-                    "edge_stats": {},
-                }
-
-            loop_started = time.perf_counter()
-
-            # ---------------------------------------------------------
-            # SUMO simulation step
-            # ---------------------------------------------------------
-            started = time.perf_counter()
+                return {"status": "cancelled", "frames": [], "edge_stats": {}}
             libsumo.simulationStep()
-            step_ms = (time.perf_counter() - started) * 1000.0
-
             now = int(round(float(libsumo.simulation.getTime())))
-
-            # ---------------------------------------------------------
-            # Basic SUMO bookkeeping
-            # ---------------------------------------------------------
-            started = time.perf_counter()
-
-            departed += int(
-                libsumo.simulation.getDepartedNumber()
-            )
-            arrived += int(
-                libsumo.simulation.getArrivedNumber()
-            )
-            teleports += len(
-                libsumo.simulation.getStartingTeleportIDList()
-            )
-
-            bookkeeping_ms = (
-                time.perf_counter() - started
-            ) * 1000.0
-
-            # ---------------------------------------------------------
-            # Dynamic speed-restriction synchronization
-            #
-            # Full closures and lane reductions are handled by the
-            # native SUMO rerouter loaded as an additional file.
-            # ---------------------------------------------------------
-            restriction_ms = 0.0
-            forced_reroute_ms = 0.0
-            restriction_changed = False
-
-            if speed_closures:
-                started = time.perf_counter()
-
-                restriction_changed = _sync_restrictions(
-                    speed_closures,
-                    mapping,
-                    payload["departure_time"],
-                    warmup_seconds,
-                    now,
-                    restriction_state,
-                    originals,
+            departed += int(libsumo.simulation.getDepartedNumber())
+            arrived += int(libsumo.simulation.getArrivedNumber())
+            teleports += len(libsumo.simulation.getStartingTeleportIDList())
+            if closures:
+                changed = _sync_restrictions(
+                    closures, mapping, payload["departure_time"], warmup_seconds,
+                    now, restriction_state, originals,
                 )
-
-                restriction_ms = (
-                    time.perf_counter() - started
-                ) * 1000.0
-
-                if restriction_changed:
-                    started = time.perf_counter()
+                if changed:
                     _reroute_active_vehicles()
-                    forced_reroute_ms = (
-                        time.perf_counter() - started
-                    ) * 1000.0
-
-            # ---------------------------------------------------------
-            # Active vehicle list
-            # ---------------------------------------------------------
-            started = time.perf_counter()
-
             active = list(libsumo.vehicle.getIDList())
-
-            vehicle_list_ms = (
-                time.perf_counter() - started
-            ) * 1000.0
-
-            # ---------------------------------------------------------
-            # Playback / edge capture
-            # ---------------------------------------------------------
-            started = time.perf_counter()
-
-            if (
-                now >= warmup_seconds
-                and now % int(payload["aggregate_interval_seconds"]) == 0
-            ):
+            if now >= warmup_seconds and now % int(payload["aggregate_interval_seconds"]) == 0:
                 _capture_edge_stats(active, edge_totals)
-
-            if (
-                now >= warmup_seconds
-                and now % int(payload["frame_interval_seconds"]) == 0
-            ):
+            if now >= warmup_seconds and now % int(payload["frame_interval_seconds"]) == 0:
                 frame, last_projected = _capture_frame(
-                    active,
-                    selected_id,
-                    max_visible,
-                    traveled,
-                    last_projected,
+                    active, selected_id, max_visible, traveled, last_projected,
                     now - warmup_seconds,
                 )
                 frames.append(frame)
-
                 if frame["selected_route_edges"]:
-                    last_selected_route = list(
-                        frame["selected_route_edges"]
-                    )
-
-            capture_ms = (
-                time.perf_counter() - started
-            ) * 1000.0
-
-            # ---------------------------------------------------------
-            # Existing progress reporting
-            # ---------------------------------------------------------
-            progress = (
-                progress_start
-                + progress_span
-                * min(now / max(end_second, 1), 1)
-            )
-
+                    last_selected_route = list(frame["selected_route_edges"])
+            progress = progress_start + progress_span * min(now / max(end_second, 1), 1)
             if now % 10 == 0:
                 _atomic_json(
                     progress_path,
-                    {
-                        "status": "running",
-                        "stage": name,
-                        "sim_second": now,
-                        "progress": progress,
-                    },
+                    {"status": "running", "stage": name, "sim_second": now, "progress": progress},
                 )
-
-            # Calculate this AFTER normal worker processing but BEFORE
-            # profiling output so profiler file I/O is excluded.
-            total_ms = (
-                time.perf_counter() - loop_started
-            ) * 1000.0
-
-            if profiling_enabled:
-                timing_buffer.append(
-                    {
-                        "sim_second": now,
-                        "active_vehicles": len(active),
-                        "step_ms": round(step_ms, 3),
-                        "bookkeeping_ms": round(bookkeeping_ms, 3),
-                        "restriction_ms": round(restriction_ms, 3),
-                        "forced_reroute_ms": round(
-                            forced_reroute_ms, 3
-                        ),
-                        "vehicle_list_ms": round(
-                            vehicle_list_ms, 3
-                        ),
-                        "capture_ms": round(capture_ms, 3),
-                        "total_ms": round(total_ms, 3),
-                        "restriction_changed": restriction_changed,
-                    }
-                )
-
-                if len(timing_buffer) >= 10:
-                    flush_timings()
-
         if selected_id in set(libsumo.vehicle.getIDList()):
-            selected_final_route = list(
-                libsumo.vehicle.getRoute(selected_id)
-            )
+            selected_final_route = list(libsumo.vehicle.getRoute(selected_id))
         elif last_selected_route:
             selected_final_route = last_selected_route
-
     finally:
-        flush_timings()
         libsumo.close()
-
     trip = None
-
     try:
         trip = parse_tripinfo(tripinfo_path, selected_id)
     except (ValueError, OSError):
         pass
-
     return {
         "status": "completed",
         "selected_trip": trip,
-        "selected_free_flow_seconds": round(
-            float(selected_free_flow_seconds),
-            3,
-        ),
-        "selected_initial_route_edge_count": len(
-            selected_initial_route
-        ),
-        "selected_final_route_edge_count": len(
-            selected_final_route
-        ),
-        "selected_initial_route_hash": _route_hash(
-            selected_initial_route
-        ),
-        "selected_final_route_hash": _route_hash(
-            selected_final_route
-        ),
-        "selected_trip_rerouted": bool(
-            selected_final_route
-            and selected_final_route != selected_initial_route
-        ),
+        "selected_initial_route_edge_count": len(selected_initial_route),
+        "selected_final_route_edge_count": len(selected_final_route),
+        "selected_initial_route_hash": _route_hash(selected_initial_route),
+        "selected_final_route_hash": _route_hash(selected_final_route),
+        "selected_trip_rerouted": bool(selected_final_route and selected_final_route != selected_initial_route),
         "departed_vehicle_count": departed,
         "arrived_vehicle_count": arrived,
         "teleport_count": teleports,
-        "remaining_vehicle_count": (
-            int(libsumo.simulation.getMinExpectedNumber())
-            if False
-            else 0
-        ),
+        "remaining_vehicle_count": int(libsumo.simulation.getMinExpectedNumber()) if False else 0,
         "frames": frames,
         "edge_stats": dict(edge_totals),
     }
 
-def _find_selected_route(
-    origins: list[str],
-    destinations: list[str],
-) -> tuple[list[str], float]:
-    best_route: list[str] | None = None
-    best_travel_time: float | None = None
 
+def _find_selected_route(origins: list[str], destinations: list[str]) -> list[str]:
     for origin in origins:
         for destination in destinations:
-            stage = libsumo.simulation.findRoute(
-                origin,
-                destination,
-                vType="passenger_sov",
-            )
-
-            if not stage.edges:
-                continue
-
-            travel_time = float(stage.travelTime)
-
-            if (
-                best_travel_time is None
-                or travel_time < best_travel_time
-            ):
-                best_route = list(stage.edges)
-                best_travel_time = travel_time
-
-    if best_route is None or best_travel_time is None:
-        raise ValueError(
-            "SUMO could not route the selected trip between "
-            "accepted edge mappings"
-        )
-
-    return best_route, best_travel_time
+            route = libsumo.simulation.findRoute(origin, destination, vType="passenger_sov")
+            if route.edges:
+                return list(route.edges)
+    raise ValueError("SUMO could not route the selected trip between accepted edge mappings")
 
 
 def _sync_restrictions(
@@ -818,355 +484,6 @@ def _reroute_active_vehicles() -> None:
         except libsumo.TraCIException:
             continue
 
-
-
-def _native_closure_window(
-    closure: dict[str, Any],
-    departure_iso: str,
-    warmup_seconds: int,
-    end_second: int,
-) -> tuple[int, int]:
-    """Translate an absolute closure window into SUMO seconds."""
-    departure = datetime.fromisoformat(departure_iso)
-    simulation_start = departure - timedelta(
-        seconds=warmup_seconds
-    )
-    simulation_end = end_second + 1
-
-    if closure.get("starts_at"):
-        starts = datetime.fromisoformat(
-            closure["starts_at"]
-        )
-        begin = int(
-            max(
-                0,
-                (starts - simulation_start).total_seconds(),
-            )
-        )
-    else:
-        begin = 0
-
-    if closure.get("ends_at"):
-        ends = datetime.fromisoformat(
-            closure["ends_at"]
-        )
-        end = int(
-            min(
-                simulation_end,
-                (ends - simulation_start).total_seconds(),
-            )
-        )
-    else:
-        end = simulation_end
-
-    return (
-        max(0, min(begin, simulation_end)),
-        max(0, min(end, simulation_end)),
-    )
-
-
-def _read_sumo_edge_metadata(
-    network_path: Path,
-) -> tuple[dict[str, float], dict[str, int]]:
-    """Read only edge lengths and lane counts from the SUMO network."""
-    lengths: dict[str, float] = {}
-    lane_counts: dict[str, int] = {}
-
-    for _, element in ET.iterparse(
-        network_path,
-        events=("end",),
-    ):
-        tag = element.tag.rsplit("}", 1)[-1]
-
-        if tag != "edge":
-            continue
-
-        edge_id = element.attrib.get("id")
-
-        if not edge_id or edge_id.startswith(":"):
-            element.clear()
-            continue
-
-        lanes = [
-            child
-            for child in element
-            if child.tag.rsplit("}", 1)[-1] == "lane"
-        ]
-
-        if lanes:
-            lane_counts[edge_id] = len(lanes)
-
-            try:
-                lengths[edge_id] = float(
-                    lanes[0].attrib.get("length", "0")
-                )
-            except ValueError:
-                lengths[edge_id] = 0.0
-
-        element.clear()
-
-    return lengths, lane_counts
-
-
-def _collect_closure_trigger_edges(
-    route_path: Path,
-    closure_edge_ids: set[str],
-    edge_lengths: dict[str, float],
-) -> list[str]:
-    """Choose approach points for closure-aware rerouting.
-
-    Rather than putting a rerouter on every road segment, choose a handful
-    of approach points along demand routes that actually cross a closure.
-
-    The farther markers matter for large regional closures where the useful
-    diversion branch may be many kilometres upstream.
-    """
-    thresholds = (
-        500.0,
-        3000.0,
-        8000.0,
-        15000.0,
-        25000.0,
-    )
-
-    triggers: set[str] = set()
-
-    route_source = (
-        gzip.open(route_path, "rb")
-        if route_path.suffix == ".gz"
-        else route_path.open("rb")
-    )
-
-    with route_source as route_stream:
-        for _, element in ET.iterparse(
-            route_stream,
-            events=("end",),
-        ):
-            tag = element.tag.rsplit("}", 1)[-1]
-
-            if tag != "route":
-                continue
-
-            raw_edges = element.attrib.get("edges", "")
-            route_edges = raw_edges.split()
-
-            if not route_edges:
-                element.clear()
-                continue
-
-            closure_positions = [
-                index
-                for index, edge_id in enumerate(route_edges)
-                if edge_id in closure_edge_ids
-            ]
-
-            if not closure_positions:
-                element.clear()
-                continue
-
-            # A planned closure should also be known from departure.
-            triggers.add(route_edges[0])
-
-            for closure_index in closure_positions:
-                distance = 0.0
-                threshold_index = 0
-
-                for index in range(
-                    closure_index - 1,
-                    -1,
-                    -1,
-                ):
-                    edge_id = route_edges[index]
-
-                    distance += max(
-                        edge_lengths.get(edge_id, 0.0),
-                        0.0,
-                    )
-
-                    while (
-                        threshold_index < len(thresholds)
-                        and distance
-                        >= thresholds[threshold_index]
-                    ):
-                        triggers.add(edge_id)
-                        threshold_index += 1
-
-                    if threshold_index >= len(thresholds):
-                        break
-
-            element.clear()
-    # Keep the rerouter valid even if no background route currently
-    # traverses one of the closed edges.
-    triggers.update(closure_edge_ids)
-
-    return sorted(triggers)
-
-
-def _write_native_closure_rerouter(
-    *,
-    run_dir: Path,
-    name: str,
-    network_path: Path,
-    route_path: Path,
-    closures: list[dict[str, Any]],
-    mapping: dict[str, list[str]],
-    departure_iso: str,
-    warmup_seconds: int,
-    end_second: int,
-) -> Path:
-    """Generate one native SUMO rerouter containing all hard closures."""
-    edge_lengths, lane_counts = (
-        _read_sumo_edge_metadata(network_path)
-    )
-
-    resolved: list[
-        tuple[dict[str, Any], list[str], int, int]
-    ] = []
-
-    closure_edge_ids: set[str] = set()
-
-    for closure in closures:
-        sumo_edges = sorted(
-            {
-                edge_id
-                for app_edge_id in closure["app_edge_ids"]
-                for edge_id in mapping[str(app_edge_id)]
-            }
-        )
-
-        begin, end = _native_closure_window(
-            closure,
-            departure_iso,
-            warmup_seconds,
-            end_second,
-        )
-
-        if begin >= end:
-            continue
-
-        closure_edge_ids.update(sumo_edges)
-
-        resolved.append(
-            (closure, sumo_edges, begin, end)
-        )
-
-    if not resolved:
-        raise ValueError(
-            "Native closure rerouter received no active "
-            "full/lane restrictions"
-        )
-
-    trigger_edges = _collect_closure_trigger_edges(
-        route_path,
-        closure_edge_ids,
-        edge_lengths,
-    )
-
-    if not trigger_edges:
-        raise ValueError(
-            "Could not determine any SUMO rerouter trigger edges"
-        )
-
-    root = ET.Element("additional")
-
-    rerouter = ET.SubElement(
-        root,
-        "rerouter",
-        {
-            "id": f"{name}-native-closures",
-            "edges": " ".join(trigger_edges),
-            "probability": "1",
-        },
-    )
-
-    timeline = {0, end_second + 1}
-
-    for _, _, begin, end in resolved:
-        timeline.add(begin)
-        timeline.add(end)
-
-    points = sorted(timeline)
-
-    disallow = " ".join(
-        sorted(str(value) for value in VEHICLE_CLASSES)
-    )
-
-    for begin, end in zip(points, points[1:]):
-        active = [
-            (closure, sumo_edges)
-            for closure, sumo_edges, start, stop
-            in resolved
-            if start <= begin < stop
-        ]
-
-        if not active:
-            continue
-
-        interval = ET.SubElement(
-            rerouter,
-            "interval",
-            {
-                "begin": str(begin),
-                "end": str(end),
-            },
-        )
-
-        for closure, sumo_edges in active:
-            kind = closure["restriction_type"]
-
-            for edge_id in sumo_edges:
-                if kind == "full":
-                    ET.SubElement(
-                        interval,
-                        "closingReroute",
-                        {
-                            "id": edge_id,
-                            "disallow": disallow,
-                        },
-                    )
-
-                elif kind == "lane":
-                    lane_count = lane_counts.get(edge_id)
-
-                    if lane_count is None:
-                        raise ValueError(
-                            f"Missing lane metadata for "
-                            f"SUMO edge {edge_id}"
-                        )
-
-                    remaining = int(
-                        closure["remaining_lanes"]
-                    )
-
-                    for lane_index in range(
-                        remaining,
-                        lane_count,
-                    ):
-                        ET.SubElement(
-                            interval,
-                            "closingLaneReroute",
-                            {
-                                "id": (
-                                    f"{edge_id}_{lane_index}"
-                                ),
-                                "disallow": disallow,
-                            },
-                        )
-
-    output_path = (
-        run_dir / f"{name}-closures.add.xml"
-    )
-
-    tree = ET.ElementTree(root)
-    ET.indent(tree, space="  ")
-
-    tree.write(
-        output_path,
-        encoding="utf-8",
-        xml_declaration=True,
-    )
-
-    return output_path
 
 def _capture_edge_stats(vehicle_ids: list[str], totals: dict[str, dict[str, Any]]) -> None:
     grouped: dict[str, list[float]] = defaultdict(list)

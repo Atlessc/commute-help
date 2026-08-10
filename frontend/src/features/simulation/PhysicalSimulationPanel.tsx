@@ -109,7 +109,7 @@ export function PhysicalSimulationPanel({ origin, destination, closure, onResult
       </button>
       {run.data?.status === 'cancelled' ? <div className="diversion-notice"><Ban size={16} /> The physical run was cancelled safely.</div> : null}
       {error ? <div className="inline-error" role="alert">{error}</div> : null}
-      {run.data?.summary ? <SimulationMetrics status={run.data} /> : null}
+      {run.data?.status === 'completed' && run.data.summary ? <SimulationMetrics status={run.data} /> : null}
     </section>
   )
 }
