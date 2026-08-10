@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     sumo_network_manifest_path: Path = Path("data/sumo/networks/active/network-manifest.json")
     sumo_network_path: Path = Path("data/sumo/networks/active/metro.net.xml")
     sumo_edge_map_path: Path = Path("data/sumo/networks/active/edge-map.parquet")
+    sumo_gateway_connector_path: Path = Path(
+        "data/sumo/config/gateway-connectors/pv-sumo-2026-08-08-v1.json"
+    )
     sumo_active_model_manifest_path: Path = Path("data/sumo/models/active/model-manifest.json")
 
     sumo_binary: Path | None = None

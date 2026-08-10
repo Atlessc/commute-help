@@ -8,11 +8,12 @@ import shutil
 import subprocess
 import sys
 import threading
-import networkx as nx
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
+
+import networkx as nx
 
 from backend.app.core.settings import Settings
 from backend.app.db.database import DatabaseManager
@@ -174,7 +175,7 @@ class SimulationRunService:
         for run_id, process in active:
             if process.poll() is None:
                 try:
-                    status = self.get(UUID(run_id))
+                    self.get(UUID(run_id))
                     with self.database.connect() as connection:
                         row = connection.execute(
                             "SELECT artifact_dir FROM simulation_runs WHERE id=?", (run_id,)
@@ -262,6 +263,9 @@ class SimulationRunService:
                 self.settings.sumo_network_manifest_path.resolve()
             ),
             "edge_map_path": str(self.settings.sumo_edge_map_path.resolve()),
+            "gateway_connector_path": str(
+                self.settings.sumo_gateway_connector_path.resolve()
+            ),
             "graph_manifest_path": str(self.settings.graph_manifest_path.resolve()),
             "nodes_path": str(self.settings.graph_nodes_path.resolve()),
             "background_seed_directory": str(

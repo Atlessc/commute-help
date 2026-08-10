@@ -10,13 +10,13 @@ import json
 import os
 import subprocess
 import sys
-import traceback
 import time
+import traceback
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
-from xml.etree import ElementTree as ET
 from typing import Any
+from xml.etree import ElementTree as ET
 
 import pandas as pd
 
@@ -51,6 +51,7 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
             "network_path",
             "network_manifest_path",
             "edge_map_path",
+            "gateway_connector_path",
             "graph_manifest_path",
             "nodes_path",
             "background_seed_directory",
@@ -88,8 +89,29 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
                 "duration_minutes": total_minutes,
                 "scale": scale,
                 "seed": seed,
-                "network_manifest": input_paths["network_manifest_path"].read_text(encoding="utf-8"),
-                "schedule_manifest": input_paths["traffic_schedule_manifest_path"].read_text(encoding="utf-8"),
+                "network_manifest": input_paths[
+                    "network_manifest_path"
+                ].read_text(encoding="utf-8"),
+                "schedule_manifest": input_paths[
+                    "traffic_schedule_manifest_path"
+                ].read_text(encoding="utf-8"),
+                "background_seed_report": (
+                    input_paths[
+                        "background_seed_directory"
+                    ]
+                    / "validation-report.json"
+                ).read_text(encoding="utf-8"),
+                "background_seed_od_sha256": hashlib.sha256(
+                    (
+                        input_paths[
+                            "background_seed_directory"
+                        ]
+                        / "od-demand-seeds.parquet"
+                    ).read_bytes()
+                ).hexdigest(),
+                "gateway_connector_sha256": hashlib.sha256(
+                    input_paths["gateway_connector_path"].read_bytes()
+                ).hexdigest(),
             },
             sort_keys=True,
         ).encode("utf-8")
@@ -127,6 +149,7 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
             start_seconds=0,
             sampling_scale=scale,
             seed=seed,
+            gateway_connector_path=input_paths["gateway_connector_path"],
             log=lambda _message: None,
         )
         try:
@@ -1091,7 +1114,7 @@ def _run_variant(
             depart=str(warmup_seconds),
         )
 
-        for sim_second in range(0, end_second + 1):
+        for sim_second in range(end_second + 1):
             if cancel_path.exists() or time.monotonic() > deadline:
                 flush_timings()
                 return {
@@ -1497,9 +1520,7 @@ def _apply_restriction(
                 (list(libsumo.lane.getAllowed(lane_id)), float(libsumo.lane.getMaxSpeed(lane_id))),
             )
             kind = closure["restriction_type"]
-            if kind == "full":
-                libsumo.lane.setDisallowed(lane_id, VEHICLE_CLASSES)
-            elif kind == "lane" and lane_index >= int(closure["remaining_lanes"]):
+            if kind == "full" or kind == "lane" and lane_index >= int(closure["remaining_lanes"]):
                 libsumo.lane.setDisallowed(lane_id, VEHICLE_CLASSES)
             elif kind == "speed":
                 libsumo.lane.setMaxSpeed(lane_id, float(closure["speed_limit_kph"]) / 3.6)

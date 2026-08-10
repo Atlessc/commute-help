@@ -23,7 +23,6 @@ import pandas as pd
 import sumolib
 from shapely import wkb
 
-
 Log = Callable[[str], None]
 DEMAND_SCHEMA_VERSION = 1
 CONNECTOR_SCHEMA_VERSION = 1
@@ -119,6 +118,92 @@ class SumoDemandError(RuntimeError):
     """Demand cannot safely be generated from the supplied artifacts."""
 
 
+def _load_gateway_connector_config(
+    path: Path,
+    *,
+    network_version: str,
+    network_sha256: str,
+) -> dict[str, dict[str, str]]:
+    """Load checksum-bound deterministic SUMO gateway connectors."""
+
+    payload = _read_json(path)
+
+    if payload.get("schema_version") != 1:
+        raise SumoDemandError(
+            "Gateway connector artifact must use schema_version 1"
+        )
+
+    if str(payload.get("sumo_network_version")) != network_version:
+        raise SumoDemandError(
+            "Gateway connector artifact does not match "
+            "the active SUMO network version"
+        )
+
+    if str(payload.get("sumo_network_sha256")) != network_sha256:
+        raise SumoDemandError(
+            "Gateway connector artifact does not match "
+            "the active SUMO network checksum"
+        )
+
+    rows = payload.get("gateways")
+
+    if not isinstance(rows, list) or not rows:
+        raise SumoDemandError(
+            "Gateway connector artifact contains no gateways"
+        )
+
+    mappings: dict[str, dict[str, str]] = {}
+
+    for row in rows:
+        if not isinstance(row, dict):
+            raise SumoDemandError(
+                "Gateway connector rows must be JSON objects"
+            )
+
+        gateway_id = str(
+            row.get("gateway_id") or ""
+        ).strip()
+
+        inbound = str(
+            row.get("inbound_sumo_edge_id") or ""
+        ).strip()
+
+        outbound = str(
+            row.get("outbound_sumo_edge_id") or ""
+        ).strip()
+
+        evidence = str(
+            row.get("evidence") or "reviewed_gateway_connector"
+        ).strip()
+
+        if not gateway_id or not inbound or not outbound:
+            raise SumoDemandError(
+                "Gateway connector rows require gateway_id, "
+                "inbound_sumo_edge_id, and outbound_sumo_edge_id"
+            )
+
+        if gateway_id in mappings:
+            raise SumoDemandError(
+                f"Duplicate gateway connector {gateway_id}"
+            )
+
+        mappings[gateway_id] = {
+            "origin": inbound,
+            "destination": outbound,
+            "evidence": evidence,
+        }
+
+    declared_count = payload.get("gateway_count")
+
+    if declared_count != len(mappings):
+        raise SumoDemandError(
+            "Gateway connector gateway_count does not "
+            "match the configured rows"
+        )
+
+    return mappings
+
+
 def build_sumo_demand(
     *,
     intake_directory: Path,
@@ -133,6 +218,7 @@ def build_sumo_demand(
     seed: int,
     connectors_per_zone: int = 4,
     max_connector_distance_m: float = 5_000.0,
+    gateway_connector_path: Path | None = None,
     duarouter_binary: Path | None = None,
     log: Log = print,
 ) -> dict[str, Any]:
@@ -172,6 +258,41 @@ def build_sumo_demand(
 
     od = pd.read_parquet(od_path)
     zones = gpd.read_parquet(zones_path)
+
+    gateway_connectors: dict[str, dict[str, str]] | None = None
+
+    has_gateway_zones = (
+        "zone_type" in zones.columns
+        and zones["zone_type"]
+        .astype(str)
+        .str.lower()
+        .eq("gateway")
+        .any()
+    )
+
+    if has_gateway_zones:
+        if gateway_connector_path is None:
+            raise SumoDemandError(
+                "Gateway OD requires a deterministic "
+                "SUMO gateway connector artifact"
+            )
+
+        if not gateway_connector_path.is_file():
+            raise SumoDemandError(
+                "Gateway connector artifact is missing: "
+                f"{gateway_connector_path}"
+            )
+
+        gateway_connectors = _load_gateway_connector_config(
+            gateway_connector_path,
+            network_version=str(
+                network_manifest["network_version"]
+            ),
+            network_sha256=str(
+                network_manifest["artifact"]["sha256"]
+            ),
+        )
+
     selected_od = od.loc[od["period"].astype(str) == period].copy()
     if selected_od.empty:
         raise SumoDemandError(f"Accepted OD demand has no rows for period {period}")
@@ -193,6 +314,7 @@ def build_sumo_demand(
         required_sumo_classes=required_classes,
         connectors_per_zone=connectors_per_zone,
         max_distance_m=max_connector_distance_m,
+        gateway_connectors=gateway_connectors,
     )
     demanded_zone_ids = set(selected_od["origin_zone_id"].astype(str)) | set(
         selected_od["destination_zone_id"].astype(str)
@@ -343,7 +465,7 @@ def build_sumo_demand(
             "schema_version": CONNECTOR_SCHEMA_VERSION,
             "connector_version": connector_version,
             "zone_count": int(connectors["zone_id"].nunique()),
-            "record_count": int(len(connectors)),
+            "record_count": len(connectors),
             "gateway_zone_count": int(
                 connectors.loc[connectors["gateway"], "zone_id"].nunique()
             ),
@@ -401,6 +523,7 @@ def build_zone_connectors(
     required_sumo_classes: list[str],
     connectors_per_zone: int,
     max_distance_m: float,
+    gateway_connectors: dict[str, dict[str, str]] | None = None,
 ) -> pd.DataFrame:
     """Select direction-preserving arterial connectors for every OD zone."""
 
@@ -425,7 +548,100 @@ def build_zone_connectors(
         zone_id = str(zone["zone_id"])
         zone_type = str(zone["zone_type"]).lower()
         gateway = zone_type in {"external", "gateway"}
-        allowed_classes = EXTERNAL_CONNECTOR_CLASSES if gateway else INTERNAL_CONNECTOR_CLASSES
+
+        if zone_type == "gateway":
+            if gateway_connectors is None:
+                raise SumoDemandError(
+                    f"Gateway zone {zone_id} has no deterministic "
+                    "connector configuration"
+                )
+
+            pinned = gateway_connectors.get(zone_id)
+
+            if pinned is None:
+                raise SumoDemandError(
+                    f"Gateway zone {zone_id} is missing from "
+                    "the SUMO gateway connector artifact"
+                )
+
+            for connector_type in (
+                "origin",
+                "destination",
+            ):
+                sumo_edge_id = pinned[connector_type]
+                edge = edges.get(sumo_edge_id)
+
+                if edge is None:
+                    raise SumoDemandError(
+                        f"Gateway {zone_id} references missing "
+                        f"SUMO edge {sumo_edge_id}"
+                    )
+
+                usable_classes = [
+                    value
+                    for value in required_sumo_classes
+                    if edge.allows(value)
+                ]
+
+                missing_classes = sorted(
+                    set(required_sumo_classes)
+                    - set(usable_classes)
+                )
+
+                if missing_classes:
+                    raise SumoDemandError(
+                        f"Gateway {zone_id} {connector_type} edge "
+                        f"{sumo_edge_id} does not allow: "
+                        + ", ".join(missing_classes)
+                    )
+
+                if not _has_directional_continuation(
+                    edge,
+                    connector_type,
+                    usable_classes,
+                ):
+                    raise SumoDemandError(
+                        f"Gateway {zone_id} {connector_type} edge "
+                        f"{sumo_edge_id} has no legal continuation"
+                    )
+
+                records.append(
+                    {
+                        "connector_schema_version": (
+                            CONNECTOR_SCHEMA_VERSION
+                        ),
+                        "zone_id": zone_id,
+                        "zone_type": zone_type,
+                        "connector_type": connector_type,
+                        "sumo_edge_id": sumo_edge_id,
+                        "app_edge_id": (
+                            f"gateway:{zone_id}"
+                        ),
+                        "weight": 1.0,
+                        "distance_m": 0.0,
+                        "road_class": (
+                            "gateway_boundary"
+                        ),
+                        "gateway": True,
+                        "status": "accepted_pinned",
+                        "review_reason": pinned[
+                            "evidence"
+                        ],
+                        "allowed_sumo_classes": json.dumps(
+                            sorted(usable_classes)
+                        ),
+                        "geometry_wkb": None,
+                    }
+                )
+
+            continue
+
+        allowed_classes = (
+            EXTERNAL_CONNECTOR_CLASSES
+            if gateway
+            else INTERNAL_CONNECTOR_CLASSES
+        )
+
         nearby_indices = accepted.sindex.query(
             zone.geometry.buffer(max_distance_m), predicate="intersects"
         )
@@ -624,10 +840,10 @@ def sample_od_trips(
         aggregate_error
     ) <= aggregate_limit
     return trips, {
-        "accepted_od_row_count": int(len(rows)),
+        "accepted_od_row_count": len(rows),
         "accepted_real_vehicle_trips": accepted_total,
         "expected_simulated_vehicle_count": accepted_total / sampling_scale,
-        "generated_simulated_vehicle_count": int(len(trips)),
+        "generated_simulated_vehicle_count": len(trips),
         "represented_real_vehicle_trips": represented_total,
         "aggregate_error_real_trips": aggregate_error,
         "maximum_absolute_row_error_real_trips": max(abs(value) for value in row_errors),

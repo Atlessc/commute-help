@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -33,10 +33,10 @@ class _Node:
         self.incoming: list[_Edge] = []
         self.outgoing: list[_Edge] = []
 
-    def getIncoming(self) -> list["_Edge"]:
+    def getIncoming(self) -> list[_Edge]:
         return self.incoming
 
-    def getOutgoing(self) -> list["_Edge"]:
+    def getOutgoing(self) -> list[_Edge]:
         return self.outgoing
 
 
@@ -138,6 +138,60 @@ def test_zone_connectors_preserve_gateway_and_vehicle_class_evidence() -> None:
     assert not connectors.loc[connectors["zone_id"] == "Z1", "gateway"].any()
     assert connectors["allowed_sumo_classes"].map(json.loads).map(
         lambda values: set(values) == {"passenger", "truck"}
+    ).all()
+
+
+def test_gateway_zone_uses_pinned_directional_connectors() -> None:
+    zones, edge_map, network = _connector_fixture()
+
+    zones.loc[
+        zones["zone_id"] == "X1",
+        "zone_type",
+    ] = "gateway"
+
+    connectors = build_zone_connectors(
+        zones=zones,
+        edge_map=edge_map,
+        network=network,
+        required_sumo_classes=[
+            "passenger",
+            "truck",
+        ],
+        connectors_per_zone=2,
+        max_distance_m=1_000,
+        gateway_connectors={
+            "X1": {
+                "origin": "e-1-a",
+                "destination": "e-1-b",
+                "evidence": "fixture_exact_gateway",
+            }
+        },
+    )
+
+    gateway = connectors.loc[
+        connectors["zone_id"] == "X1"
+    ]
+
+    assert len(gateway) == 2
+
+    origin = gateway.loc[
+        gateway["connector_type"] == "origin"
+    ].iloc[0]
+
+    destination = gateway.loc[
+        gateway["connector_type"] == "destination"
+    ].iloc[0]
+
+    assert origin["sumo_edge_id"] == "e-1-a"
+    assert destination["sumo_edge_id"] == "e-1-b"
+
+    assert (
+        gateway["status"]
+        == "accepted_pinned"
+    ).all()
+
+    assert (
+        gateway["weight"] == 1.0
     ).all()
 
 

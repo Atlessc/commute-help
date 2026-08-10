@@ -12,6 +12,7 @@ from typing import Any
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+from shapely.geometry import Point
 
 from backend.app.services.traffic_schedule_service import (
     LOCAL_TIMEZONE,
@@ -72,6 +73,12 @@ def compile_proxy_od_snapshot(
     if seeds.empty or seeds["pair_id"].duplicated().any():
         raise ProxyOdError("Proxy OD seed must contain unique nonempty pairs")
 
+    (
+        origin_zone_types,
+        destination_zone_types,
+        movement_classes,
+    ) = _seed_zone_types(seeds)
+
     local_departure = departure_time.astimezone(LOCAL_TIMEZONE)
     schedule = _schedule_scaling(schedule_service, local_departure)
     pm_weight = proxy_pm_weight(
@@ -107,6 +114,9 @@ def compile_proxy_od_snapshot(
             "period": "proxy_snapshot",
             "origin_zone_id": seeds["origin_zone"].astype(str),
             "destination_zone_id": seeds["destination_zone"].astype(str),
+            "origin_zone_type": origin_zone_types,
+            "destination_zone_type": destination_zone_types,
+            "movement_class": movement_classes,
             "vehicle_class": "sov",
             "vehicle_trips": trips,
             "vehicle_trip_rate_vph": rates,
@@ -155,8 +165,20 @@ def compile_proxy_od_snapshot(
             "generated_real_vehicle_trips": float(trips.sum()),
         },
         "quality": {
-            "proxy_zone_count": int(len(zones)),
-            "proxy_od_pair_count": int(len(od)),
+            "proxy_zone_count": len(zones),
+            "gateway_zone_count": int(
+                (zones["zone_type"].astype(str) == "gateway").sum()
+            ),
+            "proxy_od_pair_count": len(od),
+            "movement_class_counts": {
+                str(key): int(value)
+                for key, value in (
+                    od["movement_class"]
+                    .value_counts()
+                    .sort_index()
+                    .items()
+                )
+            },
             "seed_status": seed_report["status"],
             "seed_validation": seed_report["periods"],
         },
@@ -226,36 +248,295 @@ def _schedule_scaling(
     }
 
 
-def _proxy_zones(seeds: pd.DataFrame, nodes_path: Path) -> gpd.GeoDataFrame:
-    endpoints = pd.concat(
+def _seed_zone_types(
+    seeds: pd.DataFrame,
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """Resolve v1 internal-only or v2 gateway-aware seed semantics."""
+
+    type_columns = {
+        "origin_zone_type",
+        "destination_zone_type",
+    }
+
+    present = type_columns & set(seeds.columns)
+
+    if present and present != type_columns:
+        missing = sorted(type_columns - present)
+        raise ProxyOdError(
+            "Proxy OD seed has incomplete zone-type fields: "
+            + ", ".join(missing)
+        )
+
+    if present:
+        origins = (
+            seeds["origin_zone_type"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.lower()
+        )
+        destinations = (
+            seeds["destination_zone_type"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.lower()
+        )
+    else:
+        origins = pd.Series(
+            "internal",
+            index=seeds.index,
+            dtype="object",
+        )
+        destinations = pd.Series(
+            "internal",
+            index=seeds.index,
+            dtype="object",
+        )
+
+    allowed = {"internal", "gateway", "external"}
+
+    invalid_origins = sorted(
+        set(origins.unique()) - allowed
+    )
+    invalid_destinations = sorted(
+        set(destinations.unique()) - allowed
+    )
+
+    if invalid_origins or invalid_destinations:
+        invalid = sorted(
+            set(invalid_origins)
+            | set(invalid_destinations)
+        )
+        raise ProxyOdError(
+            "Proxy OD seed has invalid zone types: "
+            + ", ".join(invalid)
+        )
+
+    expected_movement = (
+        origins.astype(str)
+        + "_"
+        + destinations.astype(str)
+    )
+
+    if "movement_class" in seeds.columns:
+        movement = (
+            seeds["movement_class"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.lower()
+        )
+
+        mismatch = movement != expected_movement
+
+        if mismatch.any():
+            row = seeds.loc[mismatch].iloc[0]
+
+            raise ProxyOdError(
+                "Proxy OD movement_class does not match "
+                "origin/destination zone types for pair "
+                f"{row['pair_id']}."
+            )
+    else:
+        movement = expected_movement
+
+    return origins, destinations, movement
+
+
+def _proxy_zones(
+    seeds: pd.DataFrame,
+    nodes_path: Path,
+) -> gpd.GeoDataFrame:
+    """Build internal and gateway zone geometry from seed endpoints."""
+
+    (
+        origin_types,
+        destination_types,
+        _movement_classes,
+    ) = _seed_zone_types(seeds)
+
+    origins = seeds[
         [
-            seeds[["origin_zone", "origin_node_id"]].rename(
-                columns={"origin_zone": "zone_id", "origin_node_id": "node_id"}
-            ),
-            seeds[["destination_zone", "destination_node_id"]].rename(
-                columns={"destination_zone": "zone_id", "destination_node_id": "node_id"}
-            ),
-        ],
+            "origin_zone",
+            "origin_node_id",
+        ]
+    ].rename(
+        columns={
+            "origin_zone": "zone_id",
+            "origin_node_id": "node_id",
+        }
+    )
+    origins["zone_type"] = origin_types.to_numpy()
+
+    destinations = seeds[
+        [
+            "destination_zone",
+            "destination_node_id",
+        ]
+    ].rename(
+        columns={
+            "destination_zone": "zone_id",
+            "destination_node_id": "node_id",
+        }
+    )
+    destinations["zone_type"] = (
+        destination_types.to_numpy()
+    )
+
+    endpoints = pd.concat(
+        [origins, destinations],
         ignore_index=True,
-    ).drop_duplicates()
-    if endpoints["zone_id"].duplicated().any():
-        raise ProxyOdError("A proxy zone resolves to multiple graph nodes")
+    )
+
+    endpoints["zone_id"] = (
+        endpoints["zone_id"]
+        .astype(str)
+    )
+    endpoints["node_id"] = (
+        endpoints["node_id"]
+        .map(_node_id)
+    )
+    endpoints["zone_type"] = (
+        endpoints["zone_type"]
+        .astype(str)
+        .str.lower()
+    )
+
+    endpoints = endpoints.drop_duplicates(
+        [
+            "zone_id",
+            "node_id",
+            "zone_type",
+        ]
+    )
+
+    type_counts = (
+        endpoints.groupby("zone_id")["zone_type"]
+        .nunique()
+    )
+
+    conflicting_types = sorted(
+        type_counts.loc[type_counts > 1].index
+        .astype(str)
+        .tolist()
+    )
+
+    if conflicting_types:
+        raise ProxyOdError(
+            "Proxy zones resolve to conflicting zone types: "
+            + ", ".join(conflicting_types[:20])
+        )
+
+    zone_types = (
+        endpoints[
+            [
+                "zone_id",
+                "zone_type",
+            ]
+        ]
+        .drop_duplicates("zone_id")
+        .set_index("zone_id")["zone_type"]
+    )
+
+    node_counts = (
+        endpoints.groupby("zone_id")["node_id"]
+        .nunique()
+    )
+
+    invalid_internal = sorted(
+        zone_id
+        for zone_id, count in node_counts.items()
+        if (
+            zone_types.loc[zone_id] == "internal"
+            and int(count) != 1
+        )
+    )
+
+    if invalid_internal:
+        raise ProxyOdError(
+            "Internal proxy zones resolve to multiple "
+            "graph nodes: "
+            + ", ".join(invalid_internal[:20])
+        )
+
     nodes = gpd.read_parquet(nodes_path)
+
     node_ids = nodes["osmid"].map(_node_id)
+
     lookup = gpd.GeoDataFrame(
-        {"node_id": node_ids}, geometry=nodes.geometry, crs=nodes.crs
+        {
+            "node_id": node_ids,
+        },
+        geometry=nodes.geometry,
+        crs=nodes.crs,
     )
-    joined = endpoints.assign(node_id=endpoints["node_id"].map(_node_id)).merge(
-        lookup, on="node_id", how="left", validate="many_to_one"
+
+    joined = endpoints.merge(
+        lookup,
+        on="node_id",
+        how="left",
+        validate="many_to_one",
     )
+
     if joined["geometry"].isna().any():
-        raise ProxyOdError("A proxy OD endpoint is missing from the active graph nodes")
-    zones = gpd.GeoDataFrame(joined, geometry="geometry", crs=nodes.crs).to_crs(
-        "EPSG:32610"
+        missing_nodes = sorted(
+            joined.loc[
+                joined["geometry"].isna(),
+                "node_id",
+            ]
+            .astype(str)
+            .unique()
+            .tolist()
+        )
+
+        raise ProxyOdError(
+            "Proxy OD endpoints are missing from "
+            "the active graph nodes: "
+            + ", ".join(missing_nodes[:20])
+        )
+
+    projected = gpd.GeoDataFrame(
+        joined,
+        geometry="geometry",
+        crs=nodes.crs,
+    ).to_crs("EPSG:32610")
+
+    records = []
+
+    for (zone_id, zone_type), group in projected.groupby(
+        [
+            "zone_id",
+            "zone_type",
+        ],
+        sort=True,
+    ):
+        center = Point(
+            float(group.geometry.x.mean()),
+            float(group.geometry.y.mean()),
+        )
+
+        records.append(
+            {
+                "zone_id": str(zone_id),
+                "zone_type": str(zone_type),
+                "geometry": center.buffer(750),
+            }
+        )
+
+    zones = gpd.GeoDataFrame(
+        records,
+        geometry="geometry",
+        crs="EPSG:32610",
     )
-    zones["geometry"] = zones.geometry.buffer(750)
-    zones["zone_type"] = "internal"
-    return zones[["zone_id", "zone_type", "geometry"]].to_crs("EPSG:4326")
+
+    return zones[
+        [
+            "zone_id",
+            "zone_type",
+            "geometry",
+        ]
+    ].to_crs("EPSG:4326")
 
 
 def _node_id(value: Any) -> str:

@@ -9,7 +9,10 @@ from time import monotonic
 
 from backend.app.core.settings import get_settings
 from backend.app.services.sumo.demand_service import SumoDemandError, build_sumo_demand
-from backend.app.services.sumo.proxy_od_service import ProxyOdError, compile_proxy_od_snapshot
+from backend.app.services.sumo.proxy_od_service import (
+    ProxyOdError,
+    compile_proxy_od_snapshot,
+)
 from backend.app.services.traffic_schedule_service import (
     LOCAL_TIMEZONE,
     TrafficScheduleService,
@@ -55,6 +58,19 @@ def main() -> int:
         settings.graph_manifest_path.read_text(encoding="utf-8")
     )
     graph_version = str(graph_manifest["graph_version"])
+
+    network_manifest = __import__("json").loads(
+        settings.sumo_network_manifest_path.read_text(
+            encoding="utf-8"
+        )
+    )
+
+    gateway_connector_path = (
+        settings.sumo_path
+        / "config/gateway-connectors"
+        / f"{network_manifest['network_version']}.json"
+    )
+
     source_directory = (
         settings.traffic_path / "processed/proxy-od" / args.demand_version
     ).resolve()
@@ -96,6 +112,7 @@ def main() -> int:
             sampling_scale=args.scale,
             seed=args.seed,
             connectors_per_zone=args.connectors_per_zone,
+            gateway_connector_path=gateway_connector_path,
             log=logger,
         )
         logger(f"PASS proxy demand artifacts={output_directory}")

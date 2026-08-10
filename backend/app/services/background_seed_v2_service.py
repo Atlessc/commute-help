@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 import geopandas as gpd
@@ -16,8 +18,20 @@ import pandas as pd
 from backend.app.services.background_seed_service import (
     ROAD_CLASS_ROUTE_FACTOR,
     BackgroundSeedConfig,
+    _edge_flow_frame,
+    _load_nodes,
+    _load_priors,
+    _observations,
+    _routing_graph,
     _shortest_edge_paths,
+    assign_edge_flows,
     build_candidate_paths,
+    calibrate_path_weights,
+    flow_conservation_error,
+    select_zone_nodes,
+)
+from backend.app.services.gateway_inventory_service import (
+    load_gateway_inventory,
 )
 
 SEED_MODEL_VERSION_V2 = "regional-proxy-od-ipf-v2"
@@ -73,6 +87,410 @@ class V2PathRecord:
 
 class BackgroundSeedV2Error(RuntimeError):
     """Gateway-aware background demand cannot be constructed safely."""
+
+
+
+def build_background_seed_v2(
+    *,
+    edge_priors_path: Path,
+    nodes_path: Path,
+    gateway_inventory_path: Path,
+    graph_manifest_path: Path,
+    graph_version: str,
+    config: BackgroundSeedConfig | None = None,
+    progress: Callable[[str], None] | None = None,
+) -> tuple[
+    gpd.GeoDataFrame,
+    pd.DataFrame,
+    dict[str, Any],
+]:
+    """Build the gateway-aware regional proxy demand seed."""
+
+    settings = config or BackgroundSeedConfig()
+    log = progress or (lambda _message: None)
+
+    priors = _load_priors(
+        edge_priors_path,
+        graph_version,
+    )
+    nodes = _load_nodes(nodes_path)
+
+    graph, activity = _routing_graph(priors)
+
+    log(
+        f"loaded {len(priors):,} edge priors into a "
+        f"{graph.number_of_nodes():,}-node routing graph"
+    )
+
+    internal_zones = select_zone_nodes(
+        nodes,
+        activity,
+        settings,
+    )
+
+    log(
+        f"selected {len(internal_zones):,} "
+        "internal proxy activity zones"
+    )
+
+    gateway_edges, gateway_metadata = (
+        load_gateway_inventory(
+            gateway_inventory_path,
+            graph_manifest_path,
+        )
+    )
+
+    gateway_zones = prepare_gateway_zones(
+        gateway_edges,
+        priors,
+    )
+
+    log(
+        f"loaded {len(gateway_zones):,} "
+        "regional gateway zones"
+    )
+
+    paths = build_gateway_aware_candidate_paths(
+        graph,
+        internal_zones,
+        gateway_zones,
+        settings,
+        progress=log,
+    )
+
+    if not paths:
+        raise BackgroundSeedV2Error(
+            "No gateway-aware OD candidate paths were produced."
+        )
+
+    od_frame = _v2_path_frame(paths)
+
+    period_results: dict[
+        str,
+        dict[str, Any],
+    ] = {}
+
+    for period, prefix in (
+        ("weekday_morning", "am"),
+        ("weekday_afternoon", "pm"),
+    ):
+        observations = _observations(
+            priors,
+            prefix,
+            period,
+            settings.holdout_fraction,
+        )
+
+        weights, metrics = calibrate_path_weights(
+            paths,
+            observations,
+            iterations=settings.calibration_iterations,
+            damping=settings.calibration_damping,
+        )
+
+        edge_flows = assign_edge_flows(
+            paths,
+            weights,
+        )
+
+        conservation_error = flow_conservation_error(
+            paths,
+            weights,
+            edge_flows,
+        )
+
+        metrics[
+            "flow_conservation_max_error_vph"
+        ] = conservation_error
+
+        metrics["assigned_od_demand_vph"] = float(
+            weights.sum()
+        )
+
+        metrics["positive_flow_edge_count"] = len(
+            edge_flows
+        )
+
+        metrics[
+            "positive_flow_edge_percent"
+        ] = round(
+            100.0
+            * len(edge_flows)
+            / len(priors),
+            4,
+        )
+
+        movement_demand: dict[str, float] = {}
+
+        for movement in sorted(
+            VALID_MOVEMENT_CLASSES
+        ):
+            movement_demand[movement] = float(
+                sum(
+                    weight
+                    for path, weight in zip(
+                        paths,
+                        weights,
+                        strict=True,
+                    )
+                    if path.movement_class
+                    == movement
+                )
+            )
+
+        metrics[
+            "movement_demand_vph"
+        ] = movement_demand
+
+        metrics["gate_passed"] = bool(
+            metrics["holdout_edge_count"]
+            >= settings.minimum_pass_holdout_edges
+            and metrics["holdout_path_coverage"]
+            >= settings.minimum_pass_holdout_coverage
+            and metrics["holdout_wape"]
+            <= settings.maximum_pass_holdout_wape
+            and metrics["positive_flow_edge_percent"]
+            >= (
+                settings.minimum_pass_positive_flow_coverage
+                * 100.0
+            )
+            and conservation_error <= 1e-6
+        )
+
+        period_results[prefix] = {
+            "period": period,
+            "weights": weights,
+            "edge_flows": edge_flows,
+            "observations": observations,
+            "metrics": metrics,
+        }
+
+        od_frame[
+            f"{prefix}_demand_vph"
+        ] = weights
+
+        log(
+            f"{period}: "
+            f"train WAPE={metrics['train_wape']:.3f}, "
+            f"held-out WAPE="
+            f"{metrics['holdout_wape']:.3f}, "
+            f"held-out coverage="
+            f"{metrics['holdout_path_coverage']:.3f}, "
+            f"network flow coverage="
+            f"{metrics['positive_flow_edge_percent']:.3f}%, "
+            f"gate="
+            f"{'pass' if metrics['gate_passed'] else 'diagnostic-only'}"
+        )
+
+    edge_flows = _edge_flow_frame(
+        priors,
+        period_results,
+    )
+
+    # _edge_flow_frame is shared with v1 and stamps the
+    # v1 model name internally. Correct that provenance here.
+    edge_flows[
+        "seed_model_version"
+    ] = SEED_MODEL_VERSION_V2
+
+    gate_passed = all(
+        result["metrics"]["gate_passed"]
+        for result in period_results.values()
+    )
+
+    gateway_edge_ids = set(
+        gateway_edges["edge_id"].astype(str)
+    )
+
+    gateway_prior_rows = priors.loc[
+        priors["edge_id"]
+        .astype(str)
+        .isin(gateway_edge_ids)
+    ]
+
+    direct_am_gateway_observations = int(
+        gateway_prior_rows[
+            "historical_am_available"
+        ]
+        .fillna(False)
+        .astype(bool)
+        .sum()
+    )
+
+    direct_pm_gateway_observations = int(
+        gateway_prior_rows[
+            "historical_pm_available"
+        ]
+        .fillna(False)
+        .astype(bool)
+        .sum()
+    )
+
+    movement_counts = movement_class_counts(
+        paths
+    )
+
+    report = {
+        "schema_version": 1,
+        "model_version": SEED_MODEL_VERSION_V2,
+        "graph_version": graph_version,
+        "status": (
+            "validation_candidate"
+            if gate_passed
+            else "diagnostic_only"
+        ),
+        "evidence_level": "modeled_uncalibrated",
+        "boundary_evidence_level": (
+            "modeled_unobserved_proxy"
+        ),
+        "config": asdict(settings),
+        "directed_edge_count": len(priors),
+        "zone_count": (
+            len(internal_zones)
+            + len(gateway_zones)
+        ),
+        "internal_zone_count": len(
+            internal_zones
+        ),
+        "gateway_zone_count": len(
+            gateway_zones
+        ),
+        "od_pair_count": len(paths),
+        "movement_class_counts": {
+            key: int(value)
+            for key, value in sorted(
+                movement_counts.items()
+            )
+        },
+        "gateway_inventory": {
+            **gateway_metadata,
+            "direct_am_observed_edges": (
+                direct_am_gateway_observations
+            ),
+            "direct_pm_observed_edges": (
+                direct_pm_gateway_observations
+            ),
+        },
+        "periods": {
+            result["period"]: result["metrics"]
+            for result in period_results.values()
+        },
+        "flow_evidence_counts": {
+            prefix: {
+                str(key): int(value)
+                for key, value in edge_flows[
+                    f"{prefix}_flow_evidence"
+                ]
+                .value_counts()
+                .items()
+            }
+            for prefix in ("am", "pm")
+        },
+        "limitations": [
+            (
+                "Gateway boundary flows are currently "
+                "modeled estimates because no gateway "
+                "boundary edge has a direct historical "
+                "traffic observation in the active "
+                "PORTAL-derived evidence set."
+            ),
+            (
+                "Gateway demand may later be constrained "
+                "or replaced by ODOT/WSDOT observations "
+                "without changing the downstream SUMO "
+                "demand architecture."
+            ),
+            (
+                "Internal OD zones remain network-activity "
+                "proxies derived from road capacity and "
+                "spatial coverage, not observed household, "
+                "employment, or agency trip-table zones."
+            ),
+            (
+                "Only one free-flow path is currently "
+                "represented per origin-destination "
+                "movement."
+            ),
+            (
+                "Detector constraints cover a limited "
+                "freeway/corridor subset of the regional "
+                "network."
+            ),
+            (
+                "Zero assigned flow does not establish "
+                "zero real-world traffic."
+            ),
+            (
+                "This artifact must remain labeled "
+                "modeled_uncalibrated until stronger "
+                "boundary and network validation passes."
+            ),
+        ],
+    }
+
+    return edge_flows, od_frame, report
+
+
+def _v2_path_frame(
+    paths: list[V2PathRecord],
+) -> pd.DataFrame:
+    """Serialize gateway-aware OD paths without losing semantics."""
+
+    return pd.DataFrame.from_records(
+        [
+            {
+                "seed_schema_version": 1,
+                "seed_model_version": (
+                    SEED_MODEL_VERSION_V2
+                ),
+                "pair_id": path.pair_id,
+                "origin_zone": path.origin_zone,
+                "destination_zone": (
+                    path.destination_zone
+                ),
+                "origin_zone_type": (
+                    path.origin_zone_type
+                ),
+                "destination_zone_type": (
+                    path.destination_zone_type
+                ),
+                "movement_class": (
+                    path.movement_class
+                ),
+                "origin_node_id": (
+                    path.origin_node_id
+                ),
+                "destination_node_id": (
+                    path.destination_node_id
+                ),
+                "straight_distance_m": (
+                    path.straight_distance_m
+                ),
+                "route_free_flow_seconds": (
+                    path.route_free_flow_seconds
+                ),
+                "origin_activity": (
+                    path.origin_activity
+                ),
+                "destination_activity": (
+                    path.destination_activity
+                ),
+                "prior_weight": path.prior_weight,
+                "route_edge_count": len(
+                    path.edge_ids
+                ),
+                "route_node_ids": json.dumps(
+                    path.node_ids,
+                    separators=(",", ":"),
+                ),
+                "route_edge_ids": json.dumps(
+                    path.edge_ids,
+                    separators=(",", ":"),
+                ),
+            }
+            for path in paths
+        ]
+    )
 
 
 def build_gateway_aware_candidate_paths(

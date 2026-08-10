@@ -13,6 +13,7 @@ from backend.app.services.background_seed_v2_service import (
     MOVEMENT_INTERNAL_GATEWAY,
     MOVEMENT_INTERNAL_INTERNAL,
     BackgroundSeedV2Error,
+    _v2_path_frame,
     build_gateway_aware_candidate_paths,
     movement_class_counts,
     prepare_gateway_zones,
@@ -350,3 +351,45 @@ def test_gateway_and_internal_zone_may_share_interior_node() -> None:
     assert outbound_only.edge_ids == ("north-out",)
     assert outbound_only.node_ids == ("N1", "NOUT2")
     assert outbound_only.route_free_flow_seconds == 5.0
+
+
+
+def test_v2_path_frame_preserves_gateway_semantics() -> None:
+    paths = build_gateway_aware_candidate_paths(
+        _graph(),
+        _internal_zones(),
+        _gateway_zones(),
+        _config(),
+    )
+
+    frame = _v2_path_frame(paths)
+
+    assert {
+        "origin_zone_type",
+        "destination_zone_type",
+        "movement_class",
+    }.issubset(frame.columns)
+
+    assert set(frame["seed_model_version"]) == {
+        "regional-proxy-od-ipf-v2"
+    }
+
+    assert set(frame["movement_class"]) == {
+        MOVEMENT_INTERNAL_INTERNAL,
+        MOVEMENT_GATEWAY_INTERNAL,
+        MOVEMENT_INTERNAL_GATEWAY,
+        MOVEMENT_GATEWAY_GATEWAY,
+    }
+
+    gateway_rows = frame.loc[
+        frame["movement_class"]
+        == MOVEMENT_GATEWAY_GATEWAY
+    ]
+
+    assert not gateway_rows.empty
+    assert set(
+        gateway_rows["origin_zone_type"]
+    ) == {"gateway"}
+    assert set(
+        gateway_rows["destination_zone_type"]
+    ) == {"gateway"}

@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 import json
-from pathlib import Path
 import tempfile
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 
 from backend.app.services.background_seed_service import (
     BackgroundSeedConfig,
     build_background_seed,
     report_markdown,
 )
-
+from backend.app.services.background_seed_v2_service import (
+    build_background_seed_v2,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -52,44 +54,132 @@ def _atomic_text(path: Path, content: str) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build conserved proxy OD demand and held-out-validated edge-flow seeds."
+        description=(
+            "Build conserved proxy OD demand and "
+            "held-out-validated edge-flow seeds."
+        )
     )
+
+    parser.add_argument(
+        "--model",
+        choices=("v1", "v2"),
+        default="v1",
+        help=(
+            "v1 builds internal-only proxy OD; "
+            "v2 adds regional boundary gateways."
+        ),
+    )
+
     parser.add_argument(
         "--edge-priors",
         type=Path,
-        default=ROOT
-        / "data/traffic/processed/edge-priors/2026-07-31-portland-vancouver-v1/edge-priors.parquet",
+        default=None,
+        help=(
+            "Edge-prior parquet. Defaults to the "
+            "active graph-version edge priors."
+        ),
     )
-    parser.add_argument("--nodes", type=Path, default=ROOT / "data/graphs/nodes.parquet")
+
     parser.add_argument(
-        "--graph-manifest", type=Path, default=ROOT / "data/graphs/graph-manifest.json"
+        "--gateway-inventory",
+        type=Path,
+        default=ROOT
+        / (
+            "data/traffic/config/gateways/"
+            "2026-08-08-portland-vancouver-frozen-v2.json"
+        ),
     )
+
+    parser.add_argument(
+        "--nodes",
+        type=Path,
+        default=ROOT / "data/graphs/nodes.parquet",
+    )
+
+    parser.add_argument(
+        "--graph-manifest",
+        type=Path,
+        default=ROOT / "data/graphs/graph-manifest.json",
+    )
+
     parser.add_argument("--output", type=Path)
     parser.add_argument("--zone-count", type=int, default=80)
-    parser.add_argument("--maximum-od-pairs", type=int, default=6000)
+    parser.add_argument(
+        "--maximum-od-pairs",
+        type=int,
+        default=6000,
+    )
+
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    graph_version = str(json.loads(args.graph_manifest.read_text())["graph_version"])
-    output = args.output or (
-        ROOT / "data/traffic/processed/background-seeds" / graph_version
+
+    graph_version = str(
+        json.loads(
+            args.graph_manifest.read_text(
+                encoding="utf-8"
+            )
+        )["graph_version"]
     )
+
+    edge_priors = args.edge_priors or (
+        ROOT
+        / "data/traffic/processed/edge-priors"
+        / graph_version
+        / "edge-priors.parquet"
+    )
+
+    output = args.output or (
+        ROOT
+        / "data/traffic/processed/background-seeds"
+        / graph_version
+    )
+
     output.mkdir(parents=True, exist_ok=True)
+
     logger = BuildLogger(output / "build.log")
-    logger(f"START background-seed build graph={graph_version}")
+
+    logger(
+        "START background-seed build "
+        f"model={args.model} "
+        f"graph={graph_version} "
+        f"edge_priors={edge_priors}"
+    )
+
+    config = BackgroundSeedConfig(
+        zone_count=args.zone_count,
+        maximum_od_pairs=args.maximum_od_pairs,
+    )
+
     try:
-        edge_flows, od_pairs, report = build_background_seed(
-            edge_priors_path=args.edge_priors,
-            nodes_path=args.nodes,
-            graph_version=graph_version,
-            config=BackgroundSeedConfig(
-                zone_count=args.zone_count,
-                maximum_od_pairs=args.maximum_od_pairs,
-            ),
-            progress=logger,
-        )
+        if args.model == "v2":
+            edge_flows, od_pairs, report = (
+                build_background_seed_v2(
+                    edge_priors_path=edge_priors,
+                    nodes_path=args.nodes,
+                    gateway_inventory_path=(
+                        args.gateway_inventory
+                    ),
+                    graph_manifest_path=(
+                        args.graph_manifest
+                    ),
+                    graph_version=graph_version,
+                    config=config,
+                    progress=logger,
+                )
+            )
+        else:
+            edge_flows, od_pairs, report = (
+                build_background_seed(
+                    edge_priors_path=edge_priors,
+                    nodes_path=args.nodes,
+                    graph_version=graph_version,
+                    config=config,
+                    progress=logger,
+                )
+            )
         edge_part = output / "edge-flow-seeds.parquet.part"
         edge_flows.to_parquet(edge_part, index=False)
         edge_part.replace(output / "edge-flow-seeds.parquet")
