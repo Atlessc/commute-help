@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     sumo_runtime_mode: Literal["auto", "libsumo", "subprocess"] = "auto"
     sumo_offline_only: bool = True
     sumo_max_parallel_runs: int = Field(default=1, ge=1, le=4)
-    sumo_max_run_seconds: int = Field(default=3600, ge=60)
+    sumo_max_run_seconds: int = Field(default=28800, ge=60)
     sumo_max_run_disk_mb: int = Field(default=2048, ge=128)
     sumo_max_calibration_experiments: int = Field(default=100, ge=1)
     sumo_max_area_expansions: int = Field(default=3, ge=0, le=10)
@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     sumo_max_ensemble_runs: int = Field(default=50, ge=1)
     sumo_micro_real_vehicles_per_sim_vehicle: float = Field(default=1.0, ge=1.0)
     sumo_playback_max_visible_vehicles: int = Field(default=900, ge=1)
+    sumo_compute_chunk_seconds: int = Field(
+    default=100,
+    ge=10,
+    le=3600,
+)
 
 
 @lru_cache

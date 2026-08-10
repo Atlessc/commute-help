@@ -246,6 +246,7 @@ class SimulationRunService:
             "sumo_binary": sumo_binary,
             "step_delay_ms": request.step_delay_ms,
             "max_run_seconds": self.settings.sumo_max_run_seconds,
+            "compute_chunk_seconds": self.settings.sumo_compute_chunk_seconds,
             "max_run_disk_mb": self.settings.sumo_max_run_disk_mb,
         }
         if request.run_kind == "validation":

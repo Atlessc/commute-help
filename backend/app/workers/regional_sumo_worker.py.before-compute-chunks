@@ -214,9 +214,6 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
         "cancel_path": cancel_path,
         "progress_path": progress_path,
         "max_visible": int(worker["max_visible_vehicles"]),
-        "compute_chunk_seconds": int(
-            worker["compute_chunk_seconds"]
-        ),
     }
     # A baseline depends on the network, demand, selected trip, seed and
     # physical-model settings, but NOT on the closure definition. Reuse an
@@ -726,7 +723,6 @@ def _run_variant_process(
     max_visible: int,
     progress_start: float,
     progress_span: float,
-    compute_chunk_seconds: int,
     max_seconds: int,
 ) -> dict[str, Any]:
     """Run one SUMO variant in a disposable Python process."""
@@ -761,7 +757,6 @@ def _run_variant_process(
         "max_visible": int(max_visible),
         "progress_start": float(progress_start),
         "progress_span": float(progress_span),
-        "compute_chunk_seconds": int(compute_chunk_seconds),
         "max_seconds": int(max_seconds),
         "result_path": str(child_result_path),
     }
