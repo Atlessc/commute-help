@@ -8,6 +8,7 @@ import gzip
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -199,9 +200,8 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
         _atomic_json(result_path, {"status": "cancelled", "seed": seed})
         return 0
 
-    overall_deadline = (
-        time.monotonic()
-        + int(worker["max_run_seconds"])
+    variant_child_max_seconds = int(
+        worker["max_run_seconds"]
     )
 
     common = {
@@ -270,9 +270,7 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
             closures=[],
             progress_start=0.10,
             progress_span=0.42,
-            max_seconds=_remaining_run_seconds(
-                overall_deadline
-            ),
+            max_seconds=variant_child_max_seconds,
             **common,
         )
 
@@ -287,9 +285,7 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
         closures=payload["closures"],
         progress_start=0.52,
         progress_span=0.47,
-        max_seconds=_remaining_run_seconds(
-            overall_deadline
-        ),
+        max_seconds=variant_child_max_seconds,
         **common,
     )
     if scenario["status"] == "cancelled":
@@ -440,7 +436,14 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
         ],
     }
     _atomic_json(result_path, result)
-    _atomic_json(progress_path, {"status": "completed", "progress": 1.0, "sim_second": total_minutes * 60})
+    _atomic_json(
+        progress_path,
+        {
+            "status": "completed",
+            "progress": 1.0,
+            "sim_second": _effective_variant_end_seconds(payload),
+        },
+    )
     return 0
 
 
@@ -711,6 +714,97 @@ def _read_variant_result(
     return result
 
 
+def _effective_variant_end_seconds(
+    payload: dict[str, Any],
+) -> int:
+    requested = (
+        int(payload["warmup_minutes"])
+        + int(payload["analysis_minutes"])
+    ) * 60
+
+    profile_raw = os.getenv(
+        "COMMUTE_HELP_SUMO_PROFILE_SECONDS",
+        "",
+    ).strip()
+
+    if not profile_raw:
+        return requested
+
+    profile_seconds = int(profile_raw)
+
+    if profile_seconds <= 0:
+        return requested
+
+    return min(requested, profile_seconds)
+
+
+def _latest_variant_checkpoint(
+    checkpoint_root: Path,
+    *,
+    name: str,
+    max_second: int,
+) -> Path | None:
+    if not checkpoint_root.is_dir():
+        return None
+
+    valid: list[tuple[int, Path]] = []
+
+    for candidate in checkpoint_root.iterdir():
+        if (
+            not candidate.is_dir()
+            or not candidate.name.isdigit()
+        ):
+            continue
+
+        metadata_path = candidate / "checkpoint.json"
+        sumo_state_path = candidate / "sumo-state.xml.gz"
+        python_state_path = candidate / "python-state.json.gz"
+        result_path = candidate / "chunk-result.json.gz"
+
+        if not (
+            metadata_path.is_file()
+            and sumo_state_path.is_file()
+            and python_state_path.is_file()
+            and result_path.is_file()
+        ):
+            continue
+
+        try:
+            metadata = json.loads(
+                metadata_path.read_text(
+                    encoding="utf-8"
+                )
+            )
+
+            end_second = int(
+                metadata["chunk_end_second"]
+            )
+
+            if (
+                metadata.get("completed") is not True
+                or metadata.get("variant") != name
+                or end_second != int(candidate.name)
+                or end_second > max_second
+            ):
+                continue
+
+        except (
+            KeyError,
+            TypeError,
+            ValueError,
+            OSError,
+            json.JSONDecodeError,
+        ):
+            continue
+
+        valid.append((end_second, candidate))
+
+    if not valid:
+        return None
+
+    return max(valid, key=lambda item: item[0])[1]
+
+
 def _run_variant_process(
     *,
     name: str,
@@ -729,128 +823,632 @@ def _run_variant_process(
     compute_chunk_seconds: int,
     max_seconds: int,
 ) -> dict[str, Any]:
-    """Run one SUMO variant in a disposable Python process."""
+    """Run one SUMO variant as restartable checkpointed children."""
 
-    child_request_path = (
-        run_dir / f"{name}-variant-request.json"
+    end_second = _effective_variant_end_seconds(
+        payload
     )
-    child_result_path = (
+
+    if compute_chunk_seconds < 1:
+        raise ValueError(
+            "SUMO compute chunk size must be positive"
+        )
+
+    total_chunks = max(
+        1,
+        (
+            end_second
+            + compute_chunk_seconds
+            - 1
+        )
+        // compute_chunk_seconds,
+    )
+
+    # A 100-sim-second child should never legitimately need 30
+    # wall-clock minutes. Keep the configured max as an upper bound,
+    # but prevent one wedged libsumo child from consuming the whole job.
+    child_timeout_seconds = max(
+        60,
+        min(int(max_seconds), 1800),
+    )
+
+    checkpoint_root = (
+        run_dir / "checkpoints" / name
+    )
+    checkpoint_root.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    summary_result_path = (
         run_dir / f"{name}-variant-result.json.gz"
     )
-    child_stdout_path = (
-        run_dir / f"{name}-variant.stdout.log"
-    )
-    child_stderr_path = (
-        run_dir / f"{name}-variant.stderr.log"
-    )
 
-    if child_result_path.exists():
-        child_result_path.unlink()
-
-    child_request = {
-        "name": name,
-        "closures": closures,
-        "network_path": str(network_path),
-        "route_path": str(route_path),
-        "sumo_binary": sumo_binary,
-        "mapping": mapping,
-        "payload": payload,
-        "run_dir": str(run_dir),
-        "cancel_path": str(cancel_path),
-        "progress_path": str(progress_path),
-        "max_visible": int(max_visible),
-        "progress_start": float(progress_start),
-        "progress_span": float(progress_span),
-        "compute_chunk_seconds": int(compute_chunk_seconds),
-        "max_seconds": int(max_seconds),
-        "result_path": str(child_result_path),
-    }
-
-    _atomic_json(
-        child_request_path,
-        child_request,
+    latest = _latest_variant_checkpoint(
+        checkpoint_root,
+        name=name,
+        max_second=end_second,
     )
 
-    command = [
-        sys.executable,
-        "-m",
-        "backend.app.workers.regional_sumo_worker",
-        "--variant-request",
-        str(child_request_path),
-    ]
+    start_second = 0
+    previous_sumo_state: Path | None = None
+    previous_python_state: Path | None = None
 
-    try:
-        with (
-            child_stdout_path.open(
-                "w",
-                encoding="utf-8",
-            ) as stdout,
-            child_stderr_path.open(
-                "w",
-                encoding="utf-8",
-            ) as stderr,
-        ):
-            completed = subprocess.run(
-                command,
-                cwd=Path.cwd(),
-                stdout=stdout,
-                stderr=stderr,
-                text=True,
-                timeout=max_seconds + 120,
-                check=False,
-            )
+    if latest is not None:
+        start_second = int(latest.name)
 
-    except subprocess.TimeoutExpired as error:
-        raise TimeoutError(
-            f"{name} SUMO child exceeded its "
-            "wall-clock runtime"
-        ) from error
-
-    if not child_result_path.is_file():
-        detail = ""
-
-        try:
-            stderr_text = child_stderr_path.read_text(
-                encoding="utf-8"
-            )
-            detail = stderr_text[-4000:].strip()
-        except OSError:
-            pass
-
-        raise RuntimeError(
-            f"{name} SUMO child exited with code "
-            f"{completed.returncode} without producing "
-            f"a result"
-            + (f": {detail}" if detail else "")
+        previous_sumo_state = (
+            latest / "sumo-state.xml.gz"
+        )
+        previous_python_state = (
+            latest / "python-state.json.gz"
         )
 
-    result = _read_variant_result(
-        child_result_path
-    )
+        if start_second >= end_second:
+            completed_result = _read_variant_result(
+                latest / "chunk-result.json.gz"
+            )
 
-    if result.get("status") == "failed":
-        raise RuntimeError(
-            str(
-                result.get(
-                    "error",
-                    f"{name} SUMO child failed",
+            if (
+                completed_result.get("status")
+                != "completed"
+            ):
+                raise RuntimeError(
+                    f"{name} final checkpoint does not "
+                    "contain a completed result"
                 )
+
+            _write_variant_result(
+                summary_result_path,
+                completed_result,
+            )
+
+            return completed_result
+
+    while start_second < end_second:
+        if cancel_path.exists():
+            return {
+                "status": "cancelled",
+                "frames": [],
+                "edge_stats": {},
+            }
+
+        chunk_end_second = min(
+            start_second + compute_chunk_seconds,
+            end_second,
+        )
+
+        chunk_index = (
+            start_second // compute_chunk_seconds
+        ) + 1
+
+        final_chunk = (
+            chunk_end_second >= end_second
+        )
+
+        final_checkpoint_dir = (
+            checkpoint_root
+            / f"{chunk_end_second:08d}"
+        )
+
+        temporary_checkpoint_dir = (
+            checkpoint_root
+            / f"{chunk_end_second:08d}.tmp"
+        )
+
+        if temporary_checkpoint_dir.exists():
+            shutil.rmtree(
+                temporary_checkpoint_dir
+            )
+
+        temporary_checkpoint_dir.mkdir(
+            parents=True,
+        )
+
+        child_request_path = (
+            run_dir
+            / (
+                f"{name}-chunk-"
+                f"{chunk_index:05d}-request.json"
             )
         )
 
-    if completed.returncode != 0:
-        raise RuntimeError(
-            f"{name} SUMO child exited with code "
-            f"{completed.returncode}"
+        child_result_path = (
+            temporary_checkpoint_dir
+            / "chunk-result.json.gz"
         )
 
-    return result
+        child_stdout_path = (
+            run_dir
+            / (
+                f"{name}-chunk-"
+                f"{chunk_index:05d}.stdout.log"
+            )
+        )
+
+        child_stderr_path = (
+            run_dir
+            / (
+                f"{name}-chunk-"
+                f"{chunk_index:05d}.stderr.log"
+            )
+        )
+
+        child_request = {
+            "name": name,
+            "closures": closures,
+            "network_path": str(network_path),
+            "route_path": str(route_path),
+            "sumo_binary": sumo_binary,
+            "mapping": mapping,
+            "payload": payload,
+            "run_dir": str(run_dir),
+            "cancel_path": str(cancel_path),
+            "progress_path": str(progress_path),
+            "max_visible": int(max_visible),
+            "progress_start": float(
+                progress_start
+            ),
+            "progress_span": float(
+                progress_span
+            ),
+            "compute_chunk_seconds": int(
+                compute_chunk_seconds
+            ),
+            "chunk_start_second": int(
+                start_second
+            ),
+            "chunk_end_second": int(
+                chunk_end_second
+            ),
+            "chunk_index": int(chunk_index),
+            "total_chunks": int(total_chunks),
+            "final_chunk": bool(final_chunk),
+            "load_state_path": (
+                str(previous_sumo_state)
+                if previous_sumo_state is not None
+                else None
+            ),
+            "python_state_path": (
+                str(previous_python_state)
+                if previous_python_state is not None
+                else None
+            ),
+            "checkpoint_dir": str(
+                temporary_checkpoint_dir
+            ),
+            "max_seconds": int(
+                child_timeout_seconds
+            ),
+            "result_path": str(
+                child_result_path
+            ),
+        }
+
+        _atomic_json(
+            child_request_path,
+            child_request,
+        )
+
+        progress = (
+            progress_start
+            + progress_span
+            * min(
+                start_second
+                / max(end_second, 1),
+                1,
+            )
+        )
+
+        _atomic_json(
+            progress_path,
+            {
+                "status": "running",
+                "stage": name,
+                "sim_second": start_second,
+                "progress": progress,
+                "chunk_index": chunk_index,
+                "total_chunks": total_chunks,
+                "chunk_start_second": (
+                    start_second
+                ),
+                "chunk_end_second": (
+                    chunk_end_second
+                ),
+                "checkpoint_second": (
+                    start_second
+                ),
+            },
+        )
+
+        command = [
+            sys.executable,
+            "-m",
+            (
+                "backend.app.workers."
+                "regional_sumo_worker"
+            ),
+            "--variant-request",
+            str(child_request_path),
+        ]
+
+        max_chunk_attempts = 2
+        result: dict[str, Any] | None = None
+        completed: subprocess.CompletedProcess[str] | None = None
+        last_error: Exception | None = None
+
+        for attempt in range(
+            1,
+            max_chunk_attempts + 1,
+        ):
+            if cancel_path.exists():
+                return {
+                    "status": "cancelled",
+                    "frames": [],
+                    "edge_stats": {},
+                }
+
+            # A failed child may have left a partial checkpoint.
+            # Never let the retry reuse any uncommitted state.
+            if temporary_checkpoint_dir.exists():
+                shutil.rmtree(
+                    temporary_checkpoint_dir
+                )
+
+            temporary_checkpoint_dir.mkdir(
+                parents=True,
+            )
+
+            # Attempt 1 keeps the historical filename contract.
+            # Retries get their own logs so the original failure is
+            # preserved for diagnosis.
+            if attempt == 1:
+                attempt_stdout_path = (
+                    child_stdout_path
+                )
+                attempt_stderr_path = (
+                    child_stderr_path
+                )
+            else:
+                attempt_stdout_path = (
+                    child_stdout_path.with_name(
+                        child_stdout_path.stem
+                        + f".attempt-{attempt}"
+                        + child_stdout_path.suffix
+                    )
+                )
+                attempt_stderr_path = (
+                    child_stderr_path.with_name(
+                        child_stderr_path.stem
+                        + f".attempt-{attempt}"
+                        + child_stderr_path.suffix
+                    )
+                )
+
+            _atomic_json(
+                progress_path,
+                {
+                    "status": "running",
+                    "stage": name,
+                    "sim_second": start_second,
+                    "progress": (
+                        progress_start
+                        + progress_span
+                        * min(
+                            start_second
+                            / max(end_second, 1),
+                            1,
+                        )
+                    ),
+                    "chunk_index": chunk_index,
+                    "total_chunks": total_chunks,
+                    "chunk_start_second": (
+                        start_second
+                    ),
+                    "chunk_end_second": (
+                        chunk_end_second
+                    ),
+                    "checkpoint_second": (
+                        start_second
+                    ),
+                    "chunk_attempt": attempt,
+                    "chunk_max_attempts": (
+                        max_chunk_attempts
+                    ),
+                },
+            )
+
+            try:
+                with (
+                    attempt_stdout_path.open(
+                        "w",
+                        encoding="utf-8",
+                    ) as stdout,
+                    attempt_stderr_path.open(
+                        "w",
+                        encoding="utf-8",
+                    ) as stderr,
+                ):
+                    completed = subprocess.run(
+                        command,
+                        cwd=Path.cwd(),
+                        stdout=stdout,
+                        stderr=stderr,
+                        text=True,
+                        timeout=(
+                            child_timeout_seconds
+                            + 120
+                        ),
+                        check=False,
+                    )
+
+                if not child_result_path.is_file():
+                    detail = ""
+
+                    try:
+                        stderr_text = (
+                            attempt_stderr_path.read_text(
+                                encoding="utf-8"
+                            )
+                        )
+                        detail = stderr_text[
+                            -4000:
+                        ].strip()
+                    except OSError:
+                        pass
+
+                    raise RuntimeError(
+                        f"{name} chunk "
+                        f"{chunk_index} attempt "
+                        f"{attempt} exited with "
+                        f"code "
+                        f"{completed.returncode} "
+                        "without producing a result"
+                        + (
+                            f": {detail}"
+                            if detail
+                            else ""
+                        )
+                    )
+
+                result = _read_variant_result(
+                    child_result_path
+                )
+
+                if (
+                    result.get("status")
+                    == "cancelled"
+                ):
+                    return result
+
+                if (
+                    result.get("status")
+                    == "failed"
+                ):
+                    raise RuntimeError(
+                        str(
+                            result.get(
+                                "error",
+                                (
+                                    f"{name} chunk "
+                                    f"{chunk_index} "
+                                    f"attempt {attempt} "
+                                    "failed"
+                                ),
+                            )
+                        )
+                    )
+
+                expected_status = (
+                    "completed"
+                    if final_chunk
+                    else "checkpointed"
+                )
+
+                if (
+                    result.get("status")
+                    != expected_status
+                ):
+                    raise RuntimeError(
+                        f"{name} chunk "
+                        f"{chunk_index} attempt "
+                        f"{attempt} returned "
+                        "unexpected status "
+                        f"{result.get('status')!r}"
+                    )
+
+                if completed.returncode != 0:
+                    raise RuntimeError(
+                        f"{name} chunk "
+                        f"{chunk_index} attempt "
+                        f"{attempt} exited with "
+                        f"code "
+                        f"{completed.returncode}"
+                    )
+
+                required = (
+                    temporary_checkpoint_dir
+                    / "sumo-state.xml.gz",
+                    temporary_checkpoint_dir
+                    / "python-state.json.gz",
+                    temporary_checkpoint_dir
+                    / "checkpoint.json",
+                )
+
+                if not all(
+                    artifact.is_file()
+                    for artifact in required
+                ):
+                    raise RuntimeError(
+                        f"{name} chunk "
+                        f"{chunk_index} attempt "
+                        f"{attempt} did not "
+                        "produce a complete "
+                        "checkpoint"
+                    )
+
+                metadata = json.loads(
+                    (
+                        temporary_checkpoint_dir
+                        / "checkpoint.json"
+                    ).read_text(
+                        encoding="utf-8"
+                    )
+                )
+
+                if (
+                    metadata.get("completed")
+                    is not True
+                    or int(
+                        metadata.get(
+                            "chunk_end_second",
+                            -1,
+                        )
+                    )
+                    != chunk_end_second
+                ):
+                    raise RuntimeError(
+                        f"{name} chunk "
+                        f"{chunk_index} attempt "
+                        f"{attempt} checkpoint "
+                        "metadata is invalid"
+                    )
+
+                # Child + result + checkpoint all validated.
+                # Escape the retry loop and commit below.
+                last_error = None
+                break
+
+            except subprocess.TimeoutExpired as error:
+                last_error = TimeoutError(
+                    f"{name} chunk "
+                    f"{chunk_index} attempt "
+                    f"{attempt} "
+                    f"({start_second}→"
+                    f"{chunk_end_second}) "
+                    "exceeded its wall-clock "
+                    "runtime"
+                )
+
+            except Exception as error:
+                last_error = error
+
+            if attempt < max_chunk_attempts:
+                if temporary_checkpoint_dir.exists():
+                    shutil.rmtree(
+                        temporary_checkpoint_dir
+                    )
+
+                _atomic_json(
+                    progress_path,
+                    {
+                        "status": "running",
+                        "stage": name,
+                        "sim_second": (
+                            start_second
+                        ),
+                        "progress": (
+                            progress_start
+                            + progress_span
+                            * min(
+                                start_second
+                                / max(
+                                    end_second,
+                                    1,
+                                ),
+                                1,
+                            )
+                        ),
+                        "chunk_index": (
+                            chunk_index
+                        ),
+                        "total_chunks": (
+                            total_chunks
+                        ),
+                        "chunk_start_second": (
+                            start_second
+                        ),
+                        "chunk_end_second": (
+                            chunk_end_second
+                        ),
+                        "checkpoint_second": (
+                            start_second
+                        ),
+                        "chunk_attempt": (
+                            attempt + 1
+                        ),
+                        "chunk_max_attempts": (
+                            max_chunk_attempts
+                        ),
+                        "retrying": True,
+                        "previous_error": str(
+                            last_error
+                        ),
+                    },
+                )
+
+        if last_error is not None:
+            if temporary_checkpoint_dir.exists():
+                shutil.rmtree(
+                    temporary_checkpoint_dir
+                )
+
+            raise RuntimeError(
+                f"{name} chunk "
+                f"{chunk_index} failed after "
+                f"{max_chunk_attempts} attempts: "
+                f"{last_error}"
+            ) from last_error
+
+        if result is None or completed is None:
+            raise RuntimeError(
+                f"{name} chunk "
+                f"{chunk_index} ended without "
+                "a validated child result"
+            )
+
+        if final_checkpoint_dir.exists():
+            shutil.rmtree(
+                final_checkpoint_dir
+            )
+
+        # Atomic commit point. Only a fully validated attempt
+        # becomes the checkpoint used by future chunks/resumes.
+        os.replace(
+            temporary_checkpoint_dir,
+            final_checkpoint_dir,
+        )
+
+        previous_sumo_state = (
+            final_checkpoint_dir
+            / "sumo-state.xml.gz"
+        )
+
+        previous_python_state = (
+            final_checkpoint_dir
+            / "python-state.json.gz"
+        )
+
+        start_second = chunk_end_second
+
+        if final_chunk:
+            _write_variant_result(
+                summary_result_path,
+                result,
+            )
+
+            return result
+
+    raise RuntimeError(
+        f"{name} SUMO variant ended without "
+        "a final result"
+    )
 
 
 def _run_variant_child(
     request_path: Path,
 ) -> int:
-    """Entry point for one disposable libsumo process."""
+    """Entry point for one disposable libsumo chunk process."""
 
     request = json.loads(
         request_path.read_text(
@@ -867,6 +1465,10 @@ def _run_variant_child(
             request["run_dir"]
         ).resolve()
 
+        checkpoint_dir = Path(
+            request["checkpoint_dir"]
+        ).resolve()
+
         if not _inside(
             run_dir,
             Path.cwd().resolve(),
@@ -876,13 +1478,60 @@ def _run_variant_child(
                 "inside the local repository"
             )
 
+        if not _inside(
+            checkpoint_dir,
+            run_dir,
+        ):
+            raise ValueError(
+                "Checkpoint directory must remain "
+                "inside the variant run directory"
+            )
+
+        load_state_path = (
+            Path(
+                request["load_state_path"]
+            ).resolve()
+            if request.get(
+                "load_state_path"
+            )
+            else None
+        )
+
+        python_state_path = (
+            Path(
+                request["python_state_path"]
+            ).resolve()
+            if request.get(
+                "python_state_path"
+            )
+            else None
+        )
+
+        for state_path in (
+            load_state_path,
+            python_state_path,
+        ):
+            if (
+                state_path is not None
+                and not _inside(
+                    state_path,
+                    run_dir,
+                )
+            ):
+                raise ValueError(
+                    "Checkpoint input must remain "
+                    "inside the run directory"
+                )
+
         # Import libsumo ONLY in this child process.
         global libsumo
         import libsumo
 
         result = _run_variant(
             name=str(request["name"]),
-            closures=list(request["closures"]),
+            closures=list(
+                request["closures"]
+            ),
             network_path=Path(
                 request["network_path"]
             ).resolve(),
@@ -900,7 +1549,9 @@ def _run_variant_child(
                 for key, values
                 in request["mapping"].items()
             },
-            payload=dict(request["payload"]),
+            payload=dict(
+                request["payload"]
+            ),
             run_dir=run_dir,
             cancel_path=Path(
                 request["cancel_path"]
@@ -913,13 +1564,48 @@ def _run_variant_child(
             ),
             deadline=(
                 time.monotonic()
-                + int(request["max_seconds"])
+                + int(
+                    request["max_seconds"]
+                )
             ),
             progress_start=float(
                 request["progress_start"]
             ),
             progress_span=float(
                 request["progress_span"]
+            ),
+            compute_chunk_seconds=int(
+                request[
+                    "compute_chunk_seconds"
+                ]
+            ),
+            chunk_start_second=int(
+                request[
+                    "chunk_start_second"
+                ]
+            ),
+            chunk_end_second=int(
+                request[
+                    "chunk_end_second"
+                ]
+            ),
+            chunk_index=int(
+                request["chunk_index"]
+            ),
+            total_chunks=int(
+                request["total_chunks"]
+            ),
+            final_chunk=bool(
+                request["final_chunk"]
+            ),
+            load_state_path=(
+                load_state_path
+            ),
+            python_state_path=(
+                python_state_path
+            ),
+            checkpoint_dir=(
+                checkpoint_dir
             ),
         )
 
@@ -963,111 +1649,388 @@ def _run_variant(
     deadline: float,
     progress_start: float,
     progress_span: float,
+    compute_chunk_seconds: int,
+    chunk_start_second: int,
+    chunk_end_second: int,
+    chunk_index: int,
+    total_chunks: int,
+    final_chunk: bool,
+    load_state_path: Path | None,
+    python_state_path: Path | None,
+    checkpoint_dir: Path,
 ) -> dict[str, Any]:
-    warmup_seconds = int(payload["warmup_minutes"]) * 60
-    analysis_seconds = int(payload["analysis_minutes"]) * 60
-    requested_end_second = warmup_seconds + analysis_seconds
+    chunk_wall_started = time.perf_counter()
 
-    profile_raw = os.getenv("COMMUTE_HELP_SUMO_PROFILE_SECONDS", "").strip()
-    profile_seconds = int(profile_raw) if profile_raw else 0
-    profiling_enabled = profile_seconds > 0
-
-    end_second = (
-        min(requested_end_second, profile_seconds)
-        if profiling_enabled
-        else requested_end_second
+    warmup_seconds = (
+        int(payload["warmup_minutes"])
+        * 60
     )
 
-    timing_path = run_dir / f"{name}-timings.jsonl"
-    timing_buffer: list[dict[str, Any]] = []
+    end_second = (
+        _effective_variant_end_seconds(
+            payload
+        )
+    )
 
-    if profiling_enabled and timing_path.exists():
+    if not (
+        0
+        <= chunk_start_second
+        < chunk_end_second
+        <= end_second
+    ):
+        raise ValueError(
+            "Invalid SUMO compute chunk window"
+        )
+
+    if (
+        (load_state_path is None)
+        != (python_state_path is None)
+    ):
+        raise ValueError(
+            "SUMO and Python checkpoint state "
+            "must be loaded together"
+        )
+
+    profiling_enabled = bool(
+        os.getenv(
+            "COMMUTE_HELP_SUMO_PROFILE_SECONDS",
+            "",
+        ).strip()
+    )
+
+    timing_path = (
+        run_dir / f"{name}-timings.jsonl"
+    )
+
+    timing_buffer: list[
+        dict[str, Any]
+    ] = []
+
+    if (
+        profiling_enabled
+        and chunk_start_second == 0
+        and timing_path.exists()
+    ):
         timing_path.unlink()
 
     def flush_timings() -> None:
-        if not profiling_enabled or not timing_buffer:
+        if (
+            not profiling_enabled
+            or not timing_buffer
+        ):
             return
 
-        with timing_path.open("a", encoding="utf-8") as output:
+        with timing_path.open(
+            "a",
+            encoding="utf-8",
+        ) as output:
             for record in timing_buffer:
-                output.write(json.dumps(record, separators=(",", ":")) + "\n")
+                output.write(
+                    json.dumps(
+                        record,
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                )
 
         timing_buffer.clear()
 
-    tripinfo_path = run_dir / f"{name}-tripinfo.xml"
-    # Full and lane closures are modeled with SUMO's native rerouter.
-    # Speed restrictions remain TraCI-managed because they do not invalidate
-    # route connectivity.
+    tripinfo_path = (
+        checkpoint_dir / "tripinfo.xml"
+    )
+
     native_closures = [
         closure
         for closure in closures
-        if closure["restriction_type"] in {"full", "lane"}
+        if closure[
+            "restriction_type"
+        ]
+        in {"full", "lane"}
     ]
+
     speed_closures = [
         closure
         for closure in closures
-        if closure["restriction_type"] == "speed"
+        if closure[
+            "restriction_type"
+        ]
+        == "speed"
     ]
 
     rerouter_path = None
 
     if native_closures:
-        rerouter_path = _write_native_closure_rerouter(
-            run_dir=run_dir,
-            name=name,
-            network_path=network_path,
-            route_path=route_path,
-            closures=native_closures,
-            mapping=mapping,
-            departure_iso=payload["departure_time"],
-            warmup_seconds=warmup_seconds,
-            end_second=end_second,
+        rerouter_path = (
+            run_dir
+            / f"{name}-closures.add.xml"
         )
+
+        if not rerouter_path.is_file():
+            rerouter_path = (
+                _write_native_closure_rerouter(
+                    run_dir=run_dir,
+                    name=name,
+                    network_path=network_path,
+                    route_path=route_path,
+                    closures=native_closures,
+                    mapping=mapping,
+                    departure_iso=payload[
+                        "departure_time"
+                    ],
+                    warmup_seconds=(
+                        warmup_seconds
+                    ),
+                    end_second=end_second,
+                )
+            )
 
     command = [
         sumo_binary,
-        "--net-file", str(network_path),
-        "--route-files", str(route_path),
-        "--tripinfo-output", str(tripinfo_path),
-        "--begin", "0",
-        "--end", str(end_second),
-        "--seed", str(payload["seed"]),
-        "--mesosim", "true",
-        "--routing-algorithm", "astar",
-        "--device.rerouting.probability", "1",
-        "--device.rerouting.mode", "8",
-        "--device.rerouting.period", str(payload["reroute_period_seconds"]),
-        "--device.rerouting.adaptation-steps", "6",
-        "--device.rerouting.adaptation-interval", "10",
-        "--device.rerouting.threads", "6",
-        "--time-to-teleport", "300",
-        "--no-step-log", "true",
-        "--no-warnings", "true",
+        "--net-file",
+        str(network_path),
+        "--route-files",
+        str(route_path),
+        "--tripinfo-output",
+        str(tripinfo_path),
+        "--begin",
+        str(chunk_start_second),
+        "--end",
+        str(end_second),
+        "--seed",
+        str(payload["seed"]),
+        "--mesosim",
+        "true",
+        "--routing-algorithm",
+        "astar",
+        "--device.rerouting.probability",
+        "1",
+        "--device.rerouting.mode",
+        "8",
+        "--device.rerouting.period",
+        str(
+            payload[
+                "reroute_period_seconds"
+            ]
+        ),
+        "--device.rerouting.adaptation-steps",
+        "6",
+        "--device.rerouting.adaptation-interval",
+        "10",
+        "--device.rerouting.threads",
+        "6",
+        "--time-to-teleport",
+        "300",
+        "--save-state.rng",
+        "true",
+        "--no-step-log",
+        "true",
+        "--no-warnings",
+        "true",
     ]
 
     if rerouter_path is not None:
         command.extend(
-            ["--additional-files", str(rerouter_path)]
+            [
+                "--additional-files",
+                str(rerouter_path),
+            ]
         )
 
-    libsumo.start(command)
+    if load_state_path is not None:
+        if not load_state_path.is_file():
+            raise FileNotFoundError(
+                load_state_path
+            )
+
+        command.extend(
+            [
+                "--load-state",
+                str(load_state_path),
+            ]
+        )
 
     selected_id = "selected-trip"
-    selected_initial_route: list[str] = []
-    selected_final_route: list[str] = []
-    last_selected_route: list[str] = []
-    # Playback is useful only for the scenario variant. Keep at most
-    # one 60-second playback chunk in memory and spill completed chunks
-    # to disk immediately.
-    playback_enabled = name == "scenario"
+
+    selected_initial_route: list[
+        str
+    ] = []
+
+    last_selected_route: list[
+        str
+    ] = []
+
+    selected_free_flow_seconds = 0.0
+    selected_trip: dict[str, Any] | None = None
+
+    traveled: list[list[float]] = []
+    edge_totals: dict[
+        str,
+        dict[str, Any],
+    ] = {}
+
+    departed = 0
+    arrived = 0
+    teleports = 0
+
+    restriction_state: dict[
+        int,
+        bool,
+    ] = {}
+
+    originals: dict[
+        str,
+        tuple[list[str], float],
+    ] = {}
+
+    last_projected: list[
+        list[float]
+    ] = []
+
+    if python_state_path is not None:
+        if not python_state_path.is_file():
+            raise FileNotFoundError(
+                python_state_path
+            )
+
+        state = _read_variant_result(
+            python_state_path
+        )
+
+        if int(
+            state.get(
+                "sim_second",
+                -1,
+            )
+        ) != chunk_start_second:
+            raise ValueError(
+                "Python checkpoint time does "
+                "not match requested chunk start"
+            )
+
+        selected_initial_route = [
+            str(value)
+            for value in state.get(
+                "selected_initial_route",
+                [],
+            )
+        ]
+
+        last_selected_route = [
+            str(value)
+            for value in state.get(
+                "last_selected_route",
+                [],
+            )
+        ]
+
+        selected_free_flow_seconds = float(
+            state[
+                "selected_free_flow_seconds"
+            ]
+        )
+
+        selected_trip = state.get(
+            "selected_trip"
+        )
+
+        traveled = [
+            [
+                float(point[0]),
+                float(point[1]),
+            ]
+            for point in state.get(
+                "traveled",
+                [],
+            )
+        ]
+
+        edge_totals = {
+            str(edge_id): dict(value)
+            for edge_id, value
+            in state.get(
+                "edge_totals",
+                {},
+            ).items()
+        }
+
+        departed = int(
+            state.get(
+                "departed",
+                0,
+            )
+        )
+
+        arrived = int(
+            state.get(
+                "arrived",
+                0,
+            )
+        )
+
+        teleports = int(
+            state.get(
+                "teleports",
+                0,
+            )
+        )
+
+        restriction_state = {
+            int(key): bool(value)
+            for key, value
+            in state.get(
+                "restriction_state",
+                {},
+            ).items()
+        }
+
+        originals = {
+            str(lane_id): (
+                [
+                    str(value)
+                    for value
+                    in original[0]
+                ],
+                float(original[1]),
+            )
+            for lane_id, original
+            in state.get(
+                "originals",
+                {},
+            ).items()
+        }
+
+        last_projected = [
+            [
+                float(point[0]),
+                float(point[1]),
+            ]
+            for point in state.get(
+                "last_projected",
+                [],
+            )
+        ]
+
+    playback_enabled = (
+        name == "scenario"
+    )
+
     playback_chunk_seconds = 60
-    playback_dir = run_dir / f"{name}-playback"
+
+    playback_dir = (
+        run_dir
+        / f"{name}-playback"
+    )
 
     if playback_enabled:
-        playback_dir.mkdir(parents=True, exist_ok=True)
+        playback_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
 
-    frame_buffer: list[dict[str, Any]] = []
-    frame_chunk_paths: list[Path] = []
+    frame_buffer: list[
+        dict[str, Any]
+    ] = []
+
     frame_chunk_index: int | None = None
 
     def flush_frame_buffer() -> None:
@@ -1078,11 +2041,21 @@ def _run_variant(
 
         if frame_chunk_index is None:
             raise RuntimeError(
-                "Playback frame buffer has no chunk index"
+                "Playback frame buffer has "
+                "no chunk index"
             )
 
-        chunk_path = playback_dir / (
-            f"chunk-{frame_chunk_index:05d}.jsonl.gz"
+        # Include the compute chunk number so a
+        # 60-second playback window that straddles
+        # a 100-second process boundary cannot be
+        # overwritten by the next child.
+        chunk_path = (
+            playback_dir
+            / (
+                f"compute-{chunk_index:05d}-"
+                f"window-{frame_chunk_index:05d}"
+                ".jsonl.gz"
+            )
         )
 
         _write_playback_chunk(
@@ -1090,135 +2063,231 @@ def _run_variant(
             frame_buffer,
         )
 
-        frame_chunk_paths.append(chunk_path)
-
-        # Release all frame/agent dictionaries from this temporal window.
         frame_buffer.clear()
 
-    traveled: list[list[float]] = []
-    edge_totals: dict[str, dict[str, Any]] = {}
-    departed = 0
-    arrived = 0
-    teleports = 0
-    restriction_state: dict[int, bool] = {}
-    originals: dict[str, tuple[list[str], float]] = {}
-    last_projected: list[list[float]] = []
+    libsumo.start(command)
+
+    remaining_vehicle_count = 0
 
     try:
-        route, selected_free_flow_seconds = _find_selected_route(
-            mapping[str(payload["origin_app_edge_id"])],
-            mapping[str(payload["destination_app_edge_id"])],
-        )
-        selected_initial_route = route
-
-        libsumo.route.add(f"{name}-selected-route", route)
-        libsumo.vehicle.add(
-            selected_id,
-            f"{name}-selected-route",
-            typeID="passenger_sov",
-            depart=str(warmup_seconds),
+        loaded_time = int(
+            round(
+                float(
+                    libsumo.simulation.getTime()
+                )
+            )
         )
 
-        for sim_second in range(end_second + 1):
-            if cancel_path.exists() or time.monotonic() > deadline:
+        if (
+            loaded_time
+            != chunk_start_second
+        ):
+            raise ValueError(
+                "SUMO checkpoint time "
+                f"{loaded_time} does not match "
+                f"chunk start "
+                f"{chunk_start_second}"
+            )
+
+        if chunk_start_second == 0:
+            (
+                route,
+                selected_free_flow_seconds,
+            ) = _find_selected_route(
+                mapping[
+                    str(
+                        payload[
+                            "origin_app_edge_id"
+                        ]
+                    )
+                ],
+                mapping[
+                    str(
+                        payload[
+                            "destination_app_edge_id"
+                        ]
+                    )
+                ],
+            )
+
+            selected_initial_route = route
+
+            libsumo.route.add(
+                f"{name}-selected-route",
+                route,
+            )
+
+            libsumo.vehicle.add(
+                selected_id,
+                f"{name}-selected-route",
+                typeID="passenger_sov",
+                depart=str(
+                    warmup_seconds
+                ),
+            )
+
+        elif (
+            not selected_initial_route
+            or selected_free_flow_seconds
+            <= 0
+        ):
+            raise ValueError(
+                "Resumed chunk is missing "
+                "selected-trip checkpoint state"
+            )
+
+        while (
+            float(
+                libsumo.simulation.getTime()
+            )
+            < chunk_end_second
+        ):
+            if (
+                cancel_path.exists()
+                or time.monotonic()
+                > deadline
+            ):
                 flush_timings()
+
                 return {
                     "status": "cancelled",
                     "frames": [],
                     "edge_stats": {},
                 }
 
-            loop_started = time.perf_counter()
+            loop_started = (
+                time.perf_counter()
+            )
 
-            # ---------------------------------------------------------
-            # SUMO simulation step
-            # ---------------------------------------------------------
-            started = time.perf_counter()
+            started = (
+                time.perf_counter()
+            )
+
             libsumo.simulationStep()
-            step_ms = (time.perf_counter() - started) * 1000.0
 
-            now = int(round(float(libsumo.simulation.getTime())))
+            step_ms = (
+                time.perf_counter()
+                - started
+            ) * 1000.0
 
-            # ---------------------------------------------------------
-            # Basic SUMO bookkeeping
-            # ---------------------------------------------------------
-            started = time.perf_counter()
+            now = int(
+                round(
+                    float(
+                        libsumo.simulation.getTime()
+                    )
+                )
+            )
+
+            started = (
+                time.perf_counter()
+            )
 
             departed += int(
-                libsumo.simulation.getDepartedNumber()
+                libsumo.simulation
+                .getDepartedNumber()
             )
+
             arrived += int(
-                libsumo.simulation.getArrivedNumber()
+                libsumo.simulation
+                .getArrivedNumber()
             )
+
             teleports += len(
-                libsumo.simulation.getStartingTeleportIDList()
+                libsumo.simulation
+                .getStartingTeleportIDList()
             )
 
             bookkeeping_ms = (
-                time.perf_counter() - started
+                time.perf_counter()
+                - started
             ) * 1000.0
 
-            # ---------------------------------------------------------
-            # Dynamic speed-restriction synchronization
-            #
-            # Full closures and lane reductions are handled by the
-            # native SUMO rerouter loaded as an additional file.
-            # ---------------------------------------------------------
             restriction_ms = 0.0
             forced_reroute_ms = 0.0
             restriction_changed = False
 
             if speed_closures:
-                started = time.perf_counter()
+                started = (
+                    time.perf_counter()
+                )
 
-                restriction_changed = _sync_restrictions(
-                    speed_closures,
-                    mapping,
-                    payload["departure_time"],
-                    warmup_seconds,
-                    now,
-                    restriction_state,
-                    originals,
+                restriction_changed = (
+                    _sync_restrictions(
+                        speed_closures,
+                        mapping,
+                        payload[
+                            "departure_time"
+                        ],
+                        warmup_seconds,
+                        now,
+                        restriction_state,
+                        originals,
+                    )
                 )
 
                 restriction_ms = (
-                    time.perf_counter() - started
+                    time.perf_counter()
+                    - started
                 ) * 1000.0
 
                 if restriction_changed:
-                    started = time.perf_counter()
+                    started = (
+                        time.perf_counter()
+                    )
+
                     _reroute_active_vehicles()
+
                     forced_reroute_ms = (
-                        time.perf_counter() - started
+                        time.perf_counter()
+                        - started
                     ) * 1000.0
 
-            # ---------------------------------------------------------
-            # Active vehicle list
-            # ---------------------------------------------------------
-            started = time.perf_counter()
+            started = (
+                time.perf_counter()
+            )
 
-            active = list(libsumo.vehicle.getIDList())
+            active = list(
+                libsumo.vehicle
+                .getIDList()
+            )
 
             vehicle_list_ms = (
-                time.perf_counter() - started
+                time.perf_counter()
+                - started
             ) * 1000.0
 
-            # ---------------------------------------------------------
-            # Playback / edge capture
-            # ---------------------------------------------------------
-            started = time.perf_counter()
+            started = (
+                time.perf_counter()
+            )
 
             if (
                 now >= warmup_seconds
-                and now % int(payload["aggregate_interval_seconds"]) == 0
+                and now
+                % int(
+                    payload[
+                        "aggregate_interval_seconds"
+                    ]
+                )
+                == 0
             ):
-                _capture_edge_stats(active, edge_totals)
+                _capture_edge_stats(
+                    active,
+                    edge_totals,
+                )
 
             if (
                 now >= warmup_seconds
-                and now % int(payload["frame_interval_seconds"]) == 0
+                and now
+                % int(
+                    payload[
+                        "frame_interval_seconds"
+                    ]
+                )
+                == 0
             ):
-                elapsed_seconds = now - warmup_seconds
+                elapsed_seconds = (
+                    now - warmup_seconds
+                )
 
                 if playback_enabled:
                     next_chunk_index = (
@@ -1228,14 +2297,21 @@ def _run_variant(
 
                     if (
                         frame_buffer
-                        and frame_chunk_index is not None
-                        and next_chunk_index != frame_chunk_index
+                        and frame_chunk_index
+                        is not None
+                        and next_chunk_index
+                        != frame_chunk_index
                     ):
                         flush_frame_buffer()
 
-                    frame_chunk_index = next_chunk_index
+                    frame_chunk_index = (
+                        next_chunk_index
+                    )
 
-                    frame, last_projected = _capture_frame(
+                    (
+                        frame,
+                        last_projected,
+                    ) = _capture_frame(
                         active,
                         selected_id,
                         max_visible,
@@ -1244,132 +2320,401 @@ def _run_variant(
                         elapsed_seconds,
                     )
 
-                    frame_buffer.append(frame)
+                    frame_buffer.append(
+                        frame
+                    )
 
-                    if frame["selected_route_edges"]:
-                        last_selected_route = list(
-                            frame["selected_route_edges"]
+                    if frame[
+                        "selected_route_edges"
+                    ]:
+                        last_selected_route = (
+                            list(
+                                frame[
+                                    "selected_route_edges"
+                                ]
+                            )
                         )
 
-                # Baseline playback is never presented to the user, so do
-                # not build hundreds of agent dictionaries for it. We still
-                # retain the selected vehicle's latest route for metrics.
-                elif selected_id in set(active):
+                elif selected_id in set(
+                    active
+                ):
                     try:
-                        last_selected_route = list(
-                            libsumo.vehicle.getRoute(selected_id)
+                        last_selected_route = (
+                            list(
+                                libsumo.vehicle
+                                .getRoute(
+                                    selected_id
+                                )
+                            )
                         )
-                    except libsumo.TraCIException:
+                    except (
+                        libsumo.TraCIException
+                    ):
                         pass
 
             capture_ms = (
-                time.perf_counter() - started
+                time.perf_counter()
+                - started
             ) * 1000.0
 
-            # ---------------------------------------------------------
-            # Existing progress reporting
-            # ---------------------------------------------------------
             progress = (
                 progress_start
                 + progress_span
-                * min(now / max(end_second, 1), 1)
+                * min(
+                    now
+                    / max(
+                        end_second,
+                        1,
+                    ),
+                    1,
+                )
             )
 
             if now % 10 == 0:
                 _atomic_json(
                     progress_path,
                     {
-                        "status": "running",
+                        "status": (
+                            "running"
+                        ),
                         "stage": name,
                         "sim_second": now,
                         "progress": progress,
+                        "chunk_index": (
+                            chunk_index
+                        ),
+                        "total_chunks": (
+                            total_chunks
+                        ),
+                        "chunk_start_second": (
+                            chunk_start_second
+                        ),
+                        "chunk_end_second": (
+                            chunk_end_second
+                        ),
+                        "checkpoint_second": (
+                            chunk_start_second
+                        ),
                     },
                 )
 
-            # Calculate this AFTER normal worker processing but BEFORE
-            # profiling output so profiler file I/O is excluded.
             total_ms = (
-                time.perf_counter() - loop_started
+                time.perf_counter()
+                - loop_started
             ) * 1000.0
 
             if profiling_enabled:
                 timing_buffer.append(
                     {
                         "sim_second": now,
-                        "active_vehicles": len(active),
-                        "step_ms": round(step_ms, 3),
-                        "bookkeeping_ms": round(bookkeeping_ms, 3),
-                        "restriction_ms": round(restriction_ms, 3),
-                        "forced_reroute_ms": round(
-                            forced_reroute_ms, 3
+                        "active_vehicles": (
+                            len(active)
+                        ),
+                        "step_ms": round(
+                            step_ms,
+                            3,
+                        ),
+                        "bookkeeping_ms": round(
+                            bookkeeping_ms,
+                            3,
+                        ),
+                        "restriction_ms": round(
+                            restriction_ms,
+                            3,
+                        ),
+                        "forced_reroute_ms": (
+                            round(
+                                forced_reroute_ms,
+                                3,
+                            )
                         ),
                         "vehicle_list_ms": round(
-                            vehicle_list_ms, 3
+                            vehicle_list_ms,
+                            3,
                         ),
-                        "capture_ms": round(capture_ms, 3),
-                        "total_ms": round(total_ms, 3),
-                        "restriction_changed": restriction_changed,
+                        "capture_ms": round(
+                            capture_ms,
+                            3,
+                        ),
+                        "total_ms": round(
+                            total_ms,
+                            3,
+                        ),
+                        "restriction_changed": (
+                            restriction_changed
+                        ),
+                        "compute_chunk_index": (
+                            chunk_index
+                        ),
                     }
                 )
 
-                if len(timing_buffer) >= 10:
+                if (
+                    len(timing_buffer)
+                    >= 10
+                ):
                     flush_timings()
 
-        if selected_id in set(libsumo.vehicle.getIDList()):
-            selected_final_route = list(
-                libsumo.vehicle.getRoute(selected_id)
-            )
-        elif last_selected_route:
-            selected_final_route = last_selected_route
+        active_at_checkpoint = set(
+            libsumo.vehicle.getIDList()
+        )
+
+        if selected_id in active_at_checkpoint:
+            try:
+                last_selected_route = list(
+                    libsumo.vehicle.getRoute(
+                        selected_id
+                    )
+                )
+            except libsumo.TraCIException:
+                pass
+
+        remaining_vehicle_count = int(
+            libsumo.simulation
+            .getMinExpectedNumber()
+        )
+
+        sumo_state_path = (
+            checkpoint_dir
+            / "sumo-state.xml.gz"
+        )
+
+        libsumo.simulation.saveState(
+            str(sumo_state_path)
+        )
 
     finally:
         flush_frame_buffer()
         flush_timings()
         libsumo.close()
 
-    trip = None
-
     try:
-        trip = parse_tripinfo(tripinfo_path, selected_id)
-    except (ValueError, OSError):
+        parsed_trip = parse_tripinfo(
+            tripinfo_path,
+            selected_id,
+        )
+
+        if parsed_trip is not None:
+            selected_trip = (
+                parsed_trip
+            )
+
+    except (
+        ValueError,
+        OSError,
+    ):
         pass
+
+    python_state = {
+        "schema_version": 1,
+        "variant": name,
+        "sim_second": (
+            chunk_end_second
+        ),
+        "selected_initial_route": (
+            selected_initial_route
+        ),
+        "last_selected_route": (
+            last_selected_route
+        ),
+        "selected_free_flow_seconds": (
+            selected_free_flow_seconds
+        ),
+        "selected_trip": selected_trip,
+        "traveled": traveled,
+        "edge_totals": edge_totals,
+        "departed": departed,
+        "arrived": arrived,
+        "teleports": teleports,
+        "restriction_state": {
+            str(key): value
+            for key, value
+            in restriction_state.items()
+        },
+        "originals": originals,
+        "last_projected": (
+            last_projected
+        ),
+        "remaining_vehicle_count": (
+            remaining_vehicle_count
+        ),
+    }
+
+    _write_variant_result(
+        checkpoint_dir
+        / "python-state.json.gz",
+        python_state,
+    )
+
+    chunk_wall_seconds = round(
+        time.perf_counter()
+        - chunk_wall_started,
+        3,
+    )
+
+    _atomic_json(
+        checkpoint_dir
+        / "checkpoint.json",
+        {
+            "schema_version": 1,
+            "completed": True,
+            "variant": name,
+            "chunk_index": (
+                chunk_index
+            ),
+            "total_chunks": (
+                total_chunks
+            ),
+            "chunk_start_second": (
+                chunk_start_second
+            ),
+            "chunk_end_second": (
+                chunk_end_second
+            ),
+            "compute_chunk_seconds": (
+                compute_chunk_seconds
+            ),
+            "chunk_wall_seconds": (
+                chunk_wall_seconds
+            ),
+        },
+    )
+
+    progress = (
+        progress_start
+        + progress_span
+        * min(
+            chunk_end_second
+            / max(
+                end_second,
+                1,
+            ),
+            1,
+        )
+    )
+
+    _atomic_json(
+        progress_path,
+        {
+            "status": "running",
+            "stage": name,
+            "sim_second": (
+                chunk_end_second
+            ),
+            "progress": progress,
+            "chunk_index": (
+                chunk_index
+            ),
+            "total_chunks": (
+                total_chunks
+            ),
+            "chunk_start_second": (
+                chunk_start_second
+            ),
+            "chunk_end_second": (
+                chunk_end_second
+            ),
+            "checkpoint_second": (
+                chunk_end_second
+            ),
+            "chunk_wall_seconds": (
+                chunk_wall_seconds
+            ),
+        },
+    )
+
+    if not final_chunk:
+        return {
+            "status": "checkpointed",
+            "sim_second": (
+                chunk_end_second
+            ),
+            "chunk_index": (
+                chunk_index
+            ),
+            "chunk_wall_seconds": (
+                chunk_wall_seconds
+            ),
+        }
+
+    selected_final_route = (
+        last_selected_route
+    )
+
+    frame_chunks = (
+        sorted(
+            playback_dir.glob(
+                "compute-*.jsonl.gz"
+            )
+        )
+        if playback_enabled
+        else []
+    )
 
     return {
         "status": "completed",
-        "selected_trip": trip,
+        "selected_trip": selected_trip,
         "selected_free_flow_seconds": round(
-            float(selected_free_flow_seconds),
+            float(
+                selected_free_flow_seconds
+            ),
             3,
         ),
-        "selected_initial_route_edge_count": len(
-            selected_initial_route
+        "selected_initial_route_edge_count": (
+            len(
+                selected_initial_route
+            )
         ),
-        "selected_final_route_edge_count": len(
-            selected_final_route
+        "selected_final_route_edge_count": (
+            len(
+                selected_final_route
+            )
         ),
-        "selected_initial_route_hash": _route_hash(
-            selected_initial_route
+        "selected_initial_route_hash": (
+            _route_hash(
+                selected_initial_route
+            )
         ),
-        "selected_final_route_hash": _route_hash(
-            selected_final_route
+        "selected_final_route_hash": (
+            _route_hash(
+                selected_final_route
+            )
         ),
         "selected_trip_rerouted": bool(
             selected_final_route
-            and selected_final_route != selected_initial_route
+            and selected_final_route
+            != selected_initial_route
         ),
-        "departed_vehicle_count": departed,
-        "arrived_vehicle_count": arrived,
-        "teleport_count": teleports,
+        "departed_vehicle_count": (
+            departed
+        ),
+        "arrived_vehicle_count": (
+            arrived
+        ),
+        "teleport_count": (
+            teleports
+        ),
         "remaining_vehicle_count": (
-            int(libsumo.simulation.getMinExpectedNumber())
-            if False
-            else 0
+            remaining_vehicle_count
         ),
         "frame_chunks": [
-            str(chunk_path.relative_to(run_dir))
-            for chunk_path in frame_chunk_paths
+            str(
+                chunk_path.relative_to(
+                    run_dir
+                )
+            )
+            for chunk_path
+            in frame_chunks
         ],
-        "edge_stats": dict(edge_totals),
+        "edge_stats": dict(
+            edge_totals
+        ),
+        "compute_chunk_seconds": (
+            compute_chunk_seconds
+        ),
+        "compute_chunk_count": (
+            total_chunks
+        ),
     }
 
 

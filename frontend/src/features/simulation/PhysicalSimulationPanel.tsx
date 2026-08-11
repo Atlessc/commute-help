@@ -21,7 +21,9 @@ type Props = {
 
 export function PhysicalSimulationPanel({ origin, destination, closure, onResult }: Props) {
   const [settings, setSettings] = useState(DEFAULT_PHYSICAL_SIMULATION_SETTINGS)
-  const [runId, setRunId] = useState<string | null>(null)
+  const [runId, setRunId] = useState<string | null>(
+  '5b0320db-d691-47bf-b52e-6cd9addb4e83',
+)
   const [playbackError, setPlaybackError] = useState<string | null>(null)
   const delivered = useRef<string | null>(null)
   const starter = useMutation({
