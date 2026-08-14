@@ -51,6 +51,9 @@ class Settings(BaseSettings):
         "data/sumo/config/gateway-connectors/pv-sumo-2026-08-08-v1.json"
     )
     sumo_active_model_manifest_path: Path = Path("data/sumo/models/active/model-manifest.json")
+    sumo_station_cross_section_policy_path: Path = Path(
+        "data/sumo/networks/active/station-cross-section-policy-v1"
+    )
 
     sumo_binary: Path | None = None
     netconvert_binary: Path | None = None

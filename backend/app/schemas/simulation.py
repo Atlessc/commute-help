@@ -74,9 +74,19 @@ class SimulationRunRequest(BaseModel):
     frame_interval_seconds: int = Field(default=15, ge=5, le=60)
     aggregate_interval_seconds: int = Field(default=60, ge=30, le=300)
     reroute_period_seconds: int = Field(default=60, ge=15, le=300)
+    edge_telemetry_interval_seconds: Literal[900] | None = None
+    station_telemetry_interval_seconds: Literal[900] | None = None
+    station_cross_section_policy_digest: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
 
     @model_validator(mode="after")
     def validate_run_kind(self) -> "SimulationRunRequest":
+        station_enabled = self.station_telemetry_interval_seconds is not None
+        if station_enabled != (self.station_cross_section_policy_digest is not None):
+            raise ValueError(
+                "Station telemetry requires both the 900-second interval and policy digest"
+            )
         if self.run_kind == "regional_comparison":
             if self.departure_time is None or self.departure_time.tzinfo is None:
                 raise ValueError("regional departure_time must include a timezone")

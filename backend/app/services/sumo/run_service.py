@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 from datetime import UTC, datetime
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -54,16 +55,19 @@ class SimulationRunService:
         netconvert = shutil.which("netconvert") or str(
             Path(sys.executable).parent / "netconvert"
         )
-        worker_request = self._worker_request(request, sumo, netconvert)
         run_id = str(uuid4())
+        worker_request = self._worker_request(request, sumo, netconvert)
+        run_identity = hashlib.sha256(
+            json.dumps(worker_request, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        worker_request["application_run_id"] = run_id
+        worker_request["run_identity"] = run_identity
         run_dir = (self.settings.sumo_runs_path / run_id).resolve()
         run_dir.mkdir(parents=True, exist_ok=False)
         request_path = run_dir / "request.json"
         request_path.write_text(json.dumps(worker_request, indent=2) + "\n", encoding="utf-8")
         now = datetime.now(UTC).isoformat()
-        run_key = hashlib.sha256(
-            json.dumps(worker_request, sort_keys=True).encode("utf-8")
-        ).hexdigest()
+        run_key = run_identity
         graph_version, network_version, sumo_version = self._versions()
         with self.database.connect() as connection:
             connection.execute(
@@ -182,7 +186,7 @@ class SimulationRunService:
                         ).fetchone()
                     Path(row["artifact_dir"], "cancel.requested").touch()
                     process.wait(timeout=3)
-                except (Exception, subprocess.TimeoutExpired):
+                except (Exception, subprocess.TimeoutExpired):  # noqa: BLE001
                     process.terminate()
 
     def _monitor(self, run_id: str, process: subprocess.Popen[str], run_dir: Path) -> None:
@@ -267,6 +271,9 @@ class SimulationRunService:
             "gateway_connector_path": str(
                 self.settings.sumo_gateway_connector_path.resolve()
             ),
+            "station_cross_section_policy_path": str(
+                self.settings.sumo_station_cross_section_policy_path.resolve()
+            ),
             "graph_manifest_path": str(self.settings.graph_manifest_path.resolve()),
             "nodes_path": str(self.settings.graph_nodes_path.resolve()),
             "background_seed_directory": str(
@@ -303,7 +310,7 @@ class SimulationRunService:
                 "The selected trip has no physical free-flow path"
             ) from error
         seconds = 0.0
-        for node_u, node_v in zip(path, path[1:], strict=False):
+        for node_u, node_v in pairwise(path):
             edges = self.graph_service.graph.get_edge_data(node_u, node_v)
             seconds += min(float(edge["free_flow_seconds"]) for edge in edges.values())
         return round(seconds, 3)

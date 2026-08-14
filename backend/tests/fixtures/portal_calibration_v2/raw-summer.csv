@@ -1,0 +1,2 @@
+starttime,resolution,detector_id,speed,volume,occupancy,countreadings,delay,traveltime,vht,vmt
+2026-07-06T08:00:00-07:00,00:15:00,101,50,10,20,45,0,0,0,0

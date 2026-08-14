@@ -1,0 +1,292 @@
+{
+  "schema_version": 2,
+  "artifact_type": "commute_help_calibration",
+  "artifact_id": "synthetic.calibration-v2.tiny-001",
+  "artifact_status": "synthetic_fixture",
+  "calibration_status": "not_calibrated",
+  "generated_at": "2026-08-11T12:00:00-07:00",
+  "generator": {
+    "name": "commute-help-test-fixture",
+    "code_version": "phase-1.1",
+    "model_version": null
+  },
+  "source_dataset": {
+    "dataset_id": "synthetic.traffic-observations",
+    "dataset_version": "tiny-v1",
+    "provider": "Commute Help synthetic tests",
+    "synthetic": true
+  },
+  "source_references": [
+    {
+      "reference_kind": "manifest",
+      "reference_id": "synthetic.manifest.tiny-001",
+      "reference_version": "1",
+      "relative_path": "synthetic/tiny-manifest.json",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  ],
+  "records": [
+    {
+      "record_kind": "observation",
+      "record_id": "obs.synthetic-station-b.eastbound.2026-01-06t0715",
+      "direction": "eastbound",
+      "evidence": {
+        "input_status": "synthetic_fixture",
+        "calibration_status": "not_calibrated"
+      },
+      "detector": {
+        "station_id": "SYN-STATION-B",
+        "detector_id": "SYN-DETECTOR-B1",
+        "lane_id": null,
+        "source_direction_code": "E"
+      },
+      "source_location": {
+        "source_location_id": "SYN-LOCATION-B",
+        "latitude": 45.52,
+        "longitude": -122.67,
+        "crs": "EPSG:4326",
+        "route_id": "SYN-ROUTE-2",
+        "road_name": "Invented East Road"
+      },
+      "calendar": {
+        "exact_date": "2026-01-06",
+        "weekday": "tuesday",
+        "timezone": "America/Los_Angeles",
+        "interval_start": "2026-01-06T07:15:00-08:00",
+        "interval_end": "2026-01-06T07:30:00-08:00",
+        "interval_seconds": 900
+      },
+      "road_association": null,
+      "measurements": {
+        "volume_count": null,
+        "flow_vph": null,
+        "speed_kph": null,
+        "occupancy_percent": null,
+        "sample_count": 0,
+        "units": {
+          "volume_count": "vehicles_per_interval",
+          "flow_vph": "vehicles_per_hour",
+          "speed": "kilometers_per_hour",
+          "occupancy": "percent"
+        }
+      },
+      "quality": {
+        "disposition": "rejected",
+        "source_status": "missing",
+        "confidence": "low",
+        "missing_fields": [
+          "volume_count",
+          "flow_vph",
+          "speed_kph",
+          "occupancy_percent"
+        ],
+        "quality_flags": ["source-gap"],
+        "exclusion_reasons": ["all-measurements-missing"]
+      }
+    },
+    {
+      "record_kind": "derived_profile",
+      "record_id": "profile.synthetic-edge-101.northbound.monday.0700",
+      "direction": "northbound",
+      "evidence": {
+        "input_status": "derived_historical_profile_input",
+        "calibration_status": "not_calibrated"
+      },
+      "calendar": {
+        "weekday": "monday",
+        "timezone": "America/Los_Angeles",
+        "bucket_start_minute": 420,
+        "bucket_end_minute": 435,
+        "interval_seconds": 900,
+        "profile": {
+          "profile_id": "synthetic.weekday-winter",
+          "profile_version": "tiny-v1",
+          "label": "Synthetic winter weekday",
+          "season_name": "synthetic-winter"
+        }
+      },
+      "road_association": {
+        "graph_version": "synthetic-graph-v1",
+        "app_edge_id": "synthetic-edge-101",
+        "osm_way_ids": ["synthetic-way-101"],
+        "accepted_sumo_association": {
+          "status": "accepted",
+          "mapping_version": "synthetic-map-v1",
+          "sumo_network_version": "synthetic-sumo-v1",
+          "sumo_edge_ids": ["synthetic-sumo-edge-101"]
+        }
+      },
+      "provenance": {
+        "source_artifact_ids": ["synthetic.calibration-v2.tiny-001"],
+        "source_record_ids": ["obs.synthetic-station-a.northbound.2026-01-05t0700"],
+        "source_station_ids": ["SYN-STATION-A"],
+        "source_window_start": "2026-01-05",
+        "source_window_end": "2026-01-05",
+        "observation_count": 1,
+        "sample_days": 1,
+        "policy": {
+          "detector_collapse": "one_record_per_detector",
+          "lane_collapse": "already_station_aggregated",
+          "missing_bucket": "exclude",
+          "outlier": "source_quality_only",
+          "aggregation_method": "exact_quantiles",
+          "minimum_sample_days": 1
+        }
+      },
+      "measurements": {
+        "volume": {
+          "unit": "vehicles_per_hour",
+          "sample_count": 1,
+          "mean": 480.0,
+          "p10": null,
+          "p50": 480.0,
+          "p85": 480.0,
+          "p90": 480.0,
+          "p95": 480.0
+        },
+        "speed": {
+          "unit": "kilometers_per_hour",
+          "sample_count": 1,
+          "mean": 72.5,
+          "p10": 72.5,
+          "p50": 72.5,
+          "p85": 72.5,
+          "p90": 72.5,
+          "p95": 72.5
+        },
+        "occupancy": null,
+        "slowdown": {
+          "unit": "ratio",
+          "sample_count": 1,
+          "mean": 1.2,
+          "p10": null,
+          "p50": 1.2,
+          "p85": 1.2,
+          "p90": 1.2,
+          "p95": 1.2
+        }
+      },
+      "quality": {
+        "status": "candidate",
+        "quality_flags": ["synthetic-single-day"],
+        "exclusion_reasons": []
+      }
+    },
+    {
+      "record_kind": "observation",
+      "record_id": "obs.synthetic-station-a.northbound.2026-01-05t0700",
+      "direction": "northbound",
+      "evidence": {
+        "input_status": "synthetic_fixture",
+        "calibration_status": "not_calibrated"
+      },
+      "detector": {
+        "station_id": "SYN-STATION-A",
+        "detector_id": "SYN-DETECTOR-A1",
+        "lane_id": "all-lanes",
+        "source_direction_code": "N"
+      },
+      "source_location": {
+        "source_location_id": "SYN-LOCATION-A",
+        "latitude": 45.51,
+        "longitude": -122.68,
+        "crs": "EPSG:4326",
+        "route_id": "SYN-ROUTE-1",
+        "road_name": "Invented North Road"
+      },
+      "calendar": {
+        "exact_date": "2026-01-05",
+        "weekday": "monday",
+        "timezone": "America/Los_Angeles",
+        "interval_start": "2026-01-05T07:00:00-08:00",
+        "interval_end": "2026-01-05T07:15:00-08:00",
+        "interval_seconds": 900
+      },
+      "road_association": {
+        "graph_version": "synthetic-graph-v1",
+        "app_edge_id": "synthetic-edge-101",
+        "osm_way_ids": ["synthetic-way-101"],
+        "accepted_sumo_association": {
+          "status": "accepted",
+          "mapping_version": "synthetic-map-v1",
+          "sumo_network_version": "synthetic-sumo-v1",
+          "sumo_edge_ids": ["synthetic-sumo-edge-101"]
+        }
+      },
+      "measurements": {
+        "volume_count": 120.0,
+        "flow_vph": 480.0,
+        "speed_kph": 72.5,
+        "occupancy_percent": null,
+        "sample_count": 1,
+        "units": {
+          "volume_count": "vehicles_per_interval",
+          "flow_vph": "vehicles_per_hour",
+          "speed": "kilometers_per_hour",
+          "occupancy": "percent"
+        }
+      },
+      "quality": {
+        "disposition": "accepted",
+        "source_status": "valid",
+        "confidence": "high",
+        "missing_fields": ["occupancy_percent"],
+        "quality_flags": ["synthetic-reviewed"],
+        "exclusion_reasons": []
+      }
+    },
+    {
+      "record_kind": "observation",
+      "record_id": "obs.synthetic-station-b.eastbound.2026-01-06t0700-zero-volume",
+      "direction": "eastbound",
+      "evidence": {
+        "input_status": "synthetic_fixture",
+        "calibration_status": "not_calibrated"
+      },
+      "detector": {
+        "station_id": "SYN-STATION-B",
+        "detector_id": "SYN-DETECTOR-B1",
+        "lane_id": null,
+        "source_direction_code": "E"
+      },
+      "source_location": {
+        "source_location_id": "SYN-LOCATION-B",
+        "latitude": 45.52,
+        "longitude": -122.67,
+        "crs": "EPSG:4326",
+        "route_id": "SYN-ROUTE-2",
+        "road_name": "Invented East Road"
+      },
+      "calendar": {
+        "exact_date": "2026-01-06",
+        "weekday": "tuesday",
+        "timezone": "America/Los_Angeles",
+        "interval_start": "2026-01-06T07:00:00-08:00",
+        "interval_end": "2026-01-06T07:15:00-08:00",
+        "interval_seconds": 900
+      },
+      "road_association": null,
+      "measurements": {
+        "volume_count": 0.0,
+        "flow_vph": 0.0,
+        "speed_kph": 61.0,
+        "occupancy_percent": null,
+        "sample_count": 1,
+        "units": {
+          "volume_count": "vehicles_per_interval",
+          "flow_vph": "vehicles_per_hour",
+          "speed": "kilometers_per_hour",
+          "occupancy": "percent"
+        }
+      },
+      "quality": {
+        "disposition": "accepted",
+        "source_status": "valid",
+        "confidence": "medium",
+        "missing_fields": ["occupancy_percent"],
+        "quality_flags": ["valid-zero-volume"],
+        "exclusion_reasons": []
+      }
+    }
+  ]
+}

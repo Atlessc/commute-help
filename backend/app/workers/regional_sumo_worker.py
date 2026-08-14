@@ -15,15 +15,45 @@ import time
 import traceback
 from collections import defaultdict
 from datetime import datetime, timedelta
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
 
 import pandas as pd
+import traci.constants as tc
 
+from backend.app.services.portal_calibration_v2_importer import canonical_json
 from backend.app.services.sumo.demand_service import build_sumo_demand
+from backend.app.services.sumo.departure_provenance_service import (
+    DEPARTURE_FRAGMENT,
+    build_native_departure_fragment,
+    load_native_departure_fragment,
+    write_native_departure_fragment,
+)
+from backend.app.services.sumo.edge_telemetry_service import (
+    NATIVE_DEFINITION,
+    NATIVE_FRAGMENT,
+    materialize_sumo_edge_telemetry,
+    validate_native_fragment,
+    write_native_edge_data_definition,
+)
 from backend.app.services.sumo.output_service import parse_tripinfo
 from backend.app.services.sumo.proxy_od_service import compile_proxy_od_snapshot
+from backend.app.services.sumo.station_telemetry_service import (
+    STATION_FRAGMENT,
+    STATION_PLAN,
+    STATION_ROUTE_CANDIDATES,
+    OptimizedStationObserver,
+    build_route_candidate_provenance,
+    build_station_observation_plan,
+    load_route_candidate_provenance,
+    load_station_observation_plan,
+    materialize_station_telemetry,
+    write_route_candidate_provenance,
+    write_station_fragment,
+    write_station_observation_plan,
+)
 from backend.app.services.traffic_schedule_service import TrafficScheduleService
 
 VEHICLE_CLASSES = ["passenger", "delivery", "truck", "bus"]
@@ -59,6 +89,7 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
             "demand_cache_directory",
             "traffic_schedule_path",
             "traffic_schedule_manifest_path",
+            "station_cross_section_policy_path",
         )
     }
     if not _inside(run_dir, repository) or any(
@@ -73,6 +104,8 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
     total_minutes = warmup_minutes + analysis_minutes
     seed = int(payload["seed"])
     scale = float(payload["real_vehicles_per_simulated_vehicle"])
+    telemetry_interval = payload.get("edge_telemetry_interval_seconds")
+    station_telemetry_interval = payload.get("station_telemetry_interval_seconds")
     progress_path = run_dir / "progress.json"
     result_path = run_dir / "result.json"
     cancel_path = run_dir / "cancel.requested"
@@ -187,6 +220,26 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
         for row in edge_map.dropna(subset=["sumo_edge_id"]).itertuples()
     }
 
+    station_plan: dict[str, Any] | None = None
+    station_plan_path: Path | None = None
+    station_route_candidates_path: Path | None = None
+    if station_telemetry_interval is not None:
+        if int(station_telemetry_interval) != 900:
+            raise ValueError("Station crossing telemetry requires exactly 900 seconds")
+        station_plan = build_station_observation_plan(
+            policy_directory=input_paths["station_cross_section_policy_path"],
+            expected_policy_digest=str(payload["station_cross_section_policy_digest"]),
+            network_path=input_paths["network_path"],
+        )
+        station_plan_path = run_dir / STATION_PLAN
+        write_station_observation_plan(station_plan_path, station_plan)
+        route_candidates = build_route_candidate_provenance(
+            route_path=demand_dir / "regional.rou.xml.gz",
+            relevant_edge_ids=set(station_plan["relevant_edge_ids"]),
+        )
+        station_route_candidates_path = run_dir / STATION_ROUTE_CANDIDATES
+        write_route_candidate_provenance(station_route_candidates_path, route_candidates)
+
     # From this point forward the SUMO worker only needs the plain-Python
     # mapping/edge_names structures, not the Pandas/PyArrow DataFrame.
     del edge_map
@@ -217,12 +270,16 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
         "compute_chunk_seconds": int(
             worker["compute_chunk_seconds"]
         ),
+        "station_plan_path": station_plan_path,
+        "station_route_candidates_path": station_route_candidates_path,
     }
     # A baseline depends on the network, demand, selected trip, seed and
     # physical-model settings, but NOT on the closure definition. Reuse an
     # identical completed baseline instead of running SUMO again.
-    baseline_cache_allowed = not bool(
-        os.getenv("COMMUTE_HELP_SUMO_PROFILE_SECONDS", "").strip()
+    baseline_cache_allowed = (
+        telemetry_interval is None
+        and station_telemetry_interval is None
+        and not bool(os.getenv("COMMUTE_HELP_SUMO_PROFILE_SECONDS", "").strip())
     )
 
     baseline_cache_root = (
@@ -381,6 +438,34 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
         },
         scenario_frame_chunks,
     )
+    telemetry_manifest = None
+    if telemetry_interval is not None:
+        telemetry_manifest = materialize_sumo_edge_telemetry(
+            run_dir=run_dir,
+            application_run_id=str(worker["application_run_id"]),
+            run_identity=str(worker["run_identity"]),
+            network_manifest_path=input_paths["network_manifest_path"],
+            graph_manifest_path=input_paths["graph_manifest_path"],
+            demand_manifest=demand_manifest,
+            seed=seed,
+            real_vehicles_per_simulated_vehicle=scale,
+            simulation_start_seconds=0,
+            simulation_end_seconds=_effective_variant_end_seconds(payload),
+            interval_seconds=int(telemetry_interval),
+        )
+    station_telemetry_manifest = None
+    if station_plan is not None:
+        station_telemetry_manifest = materialize_station_telemetry(
+            run_dir=run_dir,
+            application_run_id=str(worker["application_run_id"]),
+            run_identity=str(worker["run_identity"]),
+            network_manifest_path=input_paths["network_manifest_path"],
+            graph_manifest_path=input_paths["graph_manifest_path"],
+            demand_manifest=demand_manifest,
+            plan=station_plan,
+            seed=seed,
+            simulation_end_seconds=_effective_variant_end_seconds(payload),
+        )
     edge_changes = _edge_changes(
         edge_names, baseline.pop("edge_stats"), scenario.pop("edge_stats")
     )
@@ -429,6 +514,32 @@ def run_regional(request_path: Path, worker: dict[str, Any]) -> int:
             ]["valid"],
         },
         "playback_available": True,
+        "edge_telemetry": (
+            {
+                "available": True,
+                "relative_directory": "edge-telemetry-15m",
+                "interval_seconds": int(telemetry_interval),
+                "row_count": telemetry_manifest.output.row_count,
+                "content_digest": telemetry_manifest.content_digest,
+                "evidence_level": telemetry_manifest.evidence_level,
+            }
+            if telemetry_manifest is not None
+            else {"available": False}
+        ),
+        "station_telemetry": (
+            {
+                "available": True,
+                "relative_directory": "station-telemetry-15m",
+                "interval_seconds": 900,
+                "station_count": 356,
+                "row_count": station_telemetry_manifest.output.row_count,
+                "content_digest": station_telemetry_manifest.content_digest,
+                "evidence_level": station_telemetry_manifest.evidence_level,
+                "speed_eligible": False,
+            }
+            if station_telemetry_manifest is not None
+            else {"available": False}
+        ),
         "assumptions": [
             "Regional demand uses the local detector-fitted proxy OD model, not an observed regional trip table.",
             "The baseline and closure runs use identical demand, sampling scale, and seed.",
@@ -707,7 +818,7 @@ def _read_variant_result(
         result = json.load(source)
 
     if not isinstance(result, dict):
-        raise ValueError(
+        raise TypeError(
             f"Invalid SUMO variant result: {path}"
         )
 
@@ -743,6 +854,8 @@ def _latest_variant_checkpoint(
     *,
     name: str,
     max_second: int,
+    require_telemetry: bool,
+    require_station_telemetry: bool,
 ) -> Path | None:
     if not checkpoint_root.is_dir():
         return None
@@ -760,12 +873,23 @@ def _latest_variant_checkpoint(
         sumo_state_path = candidate / "sumo-state.xml.gz"
         python_state_path = candidate / "python-state.json.gz"
         result_path = candidate / "chunk-result.json.gz"
+        telemetry_path = candidate / NATIVE_FRAGMENT
+        station_fragment_path = candidate / STATION_FRAGMENT
+        departure_fragment_path = candidate / DEPARTURE_FRAGMENT
 
         if not (
             metadata_path.is_file()
             and sumo_state_path.is_file()
             and python_state_path.is_file()
             and result_path.is_file()
+            and (not require_telemetry or telemetry_path.is_file())
+            and (
+                not require_station_telemetry
+                or (
+                    station_fragment_path.is_file()
+                    and departure_fragment_path.is_file()
+                )
+            )
         ):
             continue
 
@@ -785,6 +909,19 @@ def _latest_variant_checkpoint(
                 or metadata.get("variant") != name
                 or end_second != int(candidate.name)
                 or end_second > max_second
+                or (
+                    require_telemetry
+                    and metadata.get("telemetry_interval_seconds") != 900
+                )
+                or (
+                    require_station_telemetry
+                    and (metadata.get("departure_provenance_fragment") or {}).get(
+                        "content_digest"
+                    )
+                    != load_native_departure_fragment(departure_fragment_path).get(
+                        "content_digest"
+                    )
+                )
             ):
                 continue
 
@@ -821,6 +958,8 @@ def _run_variant_process(
     progress_start: float,
     progress_span: float,
     compute_chunk_seconds: int,
+    station_plan_path: Path | None,
+    station_route_candidates_path: Path | None,
     max_seconds: int,
 ) -> dict[str, Any]:
     """Run one SUMO variant as restartable checkpointed children."""
@@ -832,6 +971,21 @@ def _run_variant_process(
     if compute_chunk_seconds < 1:
         raise ValueError(
             "SUMO compute chunk size must be positive"
+        )
+
+    telemetry_interval = payload.get(
+        "edge_telemetry_interval_seconds"
+    )
+    station_telemetry_interval = payload.get("station_telemetry_interval_seconds")
+    if (
+        telemetry_interval is not None
+        and int(telemetry_interval)
+        % compute_chunk_seconds
+        != 0
+    ):
+        raise ValueError(
+            "The 900-second telemetry interval must be divisible by the "
+            "existing compute checkpoint interval"
         )
 
     total_chunks = max(
@@ -868,6 +1022,8 @@ def _run_variant_process(
         checkpoint_root,
         name=name,
         max_second=end_second,
+        require_telemetry=(payload.get("edge_telemetry_interval_seconds") is not None),
+        require_station_telemetry=(station_telemetry_interval is not None),
     )
 
     start_second = 0
@@ -1016,6 +1172,12 @@ def _run_variant_process(
             ),
             "checkpoint_dir": str(
                 temporary_checkpoint_dir
+            ),
+            "station_plan_path": str(station_plan_path) if station_plan_path else None,
+            "station_route_candidates_path": (
+                str(station_route_candidates_path)
+                if station_route_candidates_path
+                else None
             ),
             "max_seconds": int(
                 child_timeout_seconds
@@ -1266,14 +1428,26 @@ def _run_variant_process(
                         f"{completed.returncode}"
                     )
 
-                required = (
+                required = [
                     temporary_checkpoint_dir
                     / "sumo-state.xml.gz",
                     temporary_checkpoint_dir
                     / "python-state.json.gz",
                     temporary_checkpoint_dir
                     / "checkpoint.json",
-                )
+                ]
+                if telemetry_interval is not None:
+                    required.append(
+                        temporary_checkpoint_dir
+                        / NATIVE_FRAGMENT
+                    )
+                if station_telemetry_interval is not None:
+                    required.extend(
+                        [
+                            temporary_checkpoint_dir / STATION_FRAGMENT,
+                            temporary_checkpoint_dir / DEPARTURE_FRAGMENT,
+                        ]
+                    )
 
                 if not all(
                     artifact.is_file()
@@ -1306,6 +1480,22 @@ def _run_variant_process(
                         )
                     )
                     != chunk_end_second
+                    or (
+                        telemetry_interval is not None
+                        and metadata.get(
+                            "telemetry_interval_seconds"
+                        )
+                        != int(telemetry_interval)
+                    )
+                    or (
+                        station_telemetry_interval is not None
+                        and (metadata.get("departure_provenance_fragment") or {}).get(
+                            "content_digest"
+                        )
+                        != load_native_departure_fragment(
+                            temporary_checkpoint_dir / DEPARTURE_FRAGMENT
+                        ).get("content_digest")
+                    )
                 ):
                     raise RuntimeError(
                         f"{name} chunk "
@@ -1319,7 +1509,7 @@ def _run_variant_process(
                 last_error = None
                 break
 
-            except subprocess.TimeoutExpired as error:
+            except subprocess.TimeoutExpired:
                 last_error = TimeoutError(
                     f"{name} chunk "
                     f"{chunk_index} attempt "
@@ -1330,7 +1520,7 @@ def _run_variant_process(
                     "runtime"
                 )
 
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001
                 last_error = error
 
             if attempt < max_chunk_attempts:
@@ -1507,6 +1697,17 @@ def _run_variant_child(
             else None
         )
 
+        station_plan_path = (
+            Path(request["station_plan_path"]).resolve()
+            if request.get("station_plan_path")
+            else None
+        )
+        station_route_candidates_path = (
+            Path(request["station_route_candidates_path"]).resolve()
+            if request.get("station_route_candidates_path")
+            else None
+        )
+
         for state_path in (
             load_state_path,
             python_state_path,
@@ -1604,6 +1805,8 @@ def _run_variant_child(
             python_state_path=(
                 python_state_path
             ),
+            station_plan_path=station_plan_path,
+            station_route_candidates_path=station_route_candidates_path,
             checkpoint_dir=(
                 checkpoint_dir
             ),
@@ -1616,7 +1819,7 @@ def _run_variant_child(
 
         return 0
 
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001
         traceback.print_exc()
 
         try:
@@ -1627,7 +1830,7 @@ def _run_variant_child(
                     "error": str(error),
                 },
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             traceback.print_exc()
 
         return 1
@@ -1657,6 +1860,8 @@ def _run_variant(
     final_chunk: bool,
     load_state_path: Path | None,
     python_state_path: Path | None,
+    station_plan_path: Path | None,
+    station_route_candidates_path: Path | None,
     checkpoint_dir: Path,
 ) -> dict[str, Any]:
     chunk_wall_started = time.perf_counter()
@@ -1738,6 +1943,7 @@ def _run_variant(
     tripinfo_path = (
         checkpoint_dir / "tripinfo.xml"
     )
+    departure_vehroute_path = checkpoint_dir / "departure-vehroute.xml.gz"
 
     native_closures = [
         closure
@@ -1784,6 +1990,27 @@ def _run_variant(
                 )
             )
 
+    telemetry_interval = payload.get(
+        "edge_telemetry_interval_seconds"
+    )
+    telemetry_fragment_path: Path | None = None
+    telemetry_definition_path: Path | None = None
+    telemetry_edge_count: int | None = None
+    if telemetry_interval is not None:
+        if int(telemetry_interval) != 900:
+            raise ValueError(
+                "Native SUMO edge telemetry requires an exact 900-second interval"
+            )
+        telemetry_fragment_path = checkpoint_dir / NATIVE_FRAGMENT
+        telemetry_definition_path = checkpoint_dir / NATIVE_DEFINITION
+        write_native_edge_data_definition(
+            definition_path=telemetry_definition_path,
+            output_path=telemetry_fragment_path,
+            begin_seconds=chunk_start_second,
+            end_seconds=chunk_end_second,
+            include_empty_edge_catalog=(chunk_start_second == 0),
+        )
+
     command = [
         sumo_binary,
         "--net-file",
@@ -1827,12 +2054,31 @@ def _run_variant(
         "--no-warnings",
         "true",
     ]
+    if station_plan_path is not None:
+        command.extend(
+            [
+                "--tripinfo-output.write-unfinished",
+                "true",
+                "--vehroute-output",
+                str(departure_vehroute_path),
+                "--vehroute-output.write-unfinished",
+                "true",
+            ]
+        )
 
-    if rerouter_path is not None:
+    additional_files = [
+        path
+        for path in (
+            rerouter_path,
+            telemetry_definition_path,
+        )
+        if path is not None
+    ]
+    if additional_files:
         command.extend(
             [
                 "--additional-files",
-                str(rerouter_path),
+                ",".join(str(path) for path in additional_files),
             ]
         )
 
@@ -1885,6 +2131,8 @@ def _run_variant(
     last_projected: list[
         list[float]
     ] = []
+
+    restored_station_observer_state: dict[str, Any] | None = None
 
     if python_state_path is not None:
         if not python_state_path.is_file():
@@ -2009,6 +2257,7 @@ def _run_variant(
                 [],
             )
         ]
+        restored_station_observer_state = state.get("station_observer_state")
 
     playback_enabled = (
         name == "scenario"
@@ -2068,13 +2317,42 @@ def _run_variant(
     libsumo.start(command)
 
     remaining_vehicle_count = 0
+    station_observer: OptimizedStationObserver | None = None
+    station_fragment_rows: list[dict[str, Any]] = []
+    numeric_depart_positions: dict[str, float] = {}
+    station_candidate_vehicle_ids: set[str] = set()
+    if station_plan_path is not None:
+        plan = load_station_observation_plan(station_plan_path)
+        station_observer = OptimizedStationObserver(
+            plan,
+            variant=name,
+            restored_state=restored_station_observer_state,
+            defer_interval_finalization=True,
+        )
+        if station_route_candidates_path is None:
+            raise ValueError("Station telemetry lacks route-candidate provenance")
+        candidates = load_route_candidate_provenance(station_route_candidates_path)
+        station_candidate_vehicle_ids = set(candidates["candidate_vehicle_ids"])
+        numeric_depart_positions = {
+            str(key): float(value)
+            for key, value in candidates["numeric_departure_positions_m"].items()
+        }
+        # A loaded SUMO state already contains active vehicles. Subscription
+        # registrations are process-local, so reconstruct them in every child.
+        for vehicle_id in sorted(set(libsumo.vehicle.getIDList()) & station_candidate_vehicle_ids):
+            try:
+                libsumo.vehicle.subscribe(
+                    vehicle_id,
+                    (tc.VAR_ROAD_ID, tc.VAR_LANEPOSITION, tc.VAR_ROUTE_INDEX),
+                )
+                station_observer.metrics["subscription_setup_calls"] += 1
+            except libsumo.TraCIException:
+                pass
 
     try:
-        loaded_time = int(
-            round(
-                float(
-                    libsumo.simulation.getTime()
-                )
+        loaded_time = round(
+            float(
+                libsumo.simulation.getTime()
             )
         )
 
@@ -2170,13 +2448,50 @@ def _run_variant(
                 - started
             ) * 1000.0
 
-            now = int(
-                round(
-                    float(
-                        libsumo.simulation.getTime()
-                    )
+            now = round(
+                float(
+                    libsumo.simulation.getTime()
                 )
             )
+
+            departed_ids = set(libsumo.simulation.getDepartedIDList())
+            arrived_ids = set(libsumo.simulation.getArrivedIDList())
+
+            if station_observer is not None:
+                # Subscriptions are deliberately rebuilt in every disposable
+                # child. New departures are subscribed before retrieving this
+                # step's batched results; already-active vehicles are restored
+                # by deterministic child-start subscription setup below.
+                for vehicle_id in sorted(departed_ids & station_candidate_vehicle_ids):
+                    try:
+                        libsumo.vehicle.subscribe(
+                            vehicle_id,
+                            (tc.VAR_ROAD_ID, tc.VAR_LANEPOSITION, tc.VAR_ROUTE_INDEX),
+                        )
+                        station_observer.metrics["subscription_setup_calls"] += 1
+                    except libsumo.TraCIException:
+                        pass
+                raw_results = libsumo.vehicle.getAllSubscriptionResults()
+                station_observer.metrics["subscription_result_calls"] += 1
+                subscription_rows = {
+                    str(vehicle_id): {
+                        "road_id": values.get(tc.VAR_ROAD_ID, ""),
+                        "lane_position_m": values.get(tc.VAR_LANEPOSITION, 0.0),
+                        "route_index": values.get(tc.VAR_ROUTE_INDEX, -1),
+                    }
+                    for vehicle_id, values in raw_results.items()
+                    if tc.VAR_ROAD_ID in values
+                    and tc.VAR_LANEPOSITION in values
+                    and tc.VAR_ROUTE_INDEX in values
+                }
+                _, completed_rows = station_observer.observe(
+                    time_seconds=now,
+                    subscription_rows=subscription_rows,
+                    departed_ids=departed_ids,
+                    arrived_ids=arrived_ids,
+                    departure_positions_m=numeric_depart_positions,
+                )
+                station_fragment_rows.extend(completed_rows)
 
             started = (
                 time.perf_counter()
@@ -2488,6 +2803,37 @@ def _run_variant(
         flush_timings()
         libsumo.close()
 
+    departure_fragment: dict[str, Any] | None = None
+    if station_observer is not None:
+        departure_fragment = build_native_departure_fragment(
+            vehroute_path=departure_vehroute_path,
+            tripinfo_path=tripinfo_path,
+            # Only unresolved station-local direct departures need durable
+            # native provenance. The full native XML remains audit evidence in
+            # the checkpoint, while the Python fragment stays bounded.
+            departed_vehicle_ids=set(station_observer.pending_direct_departures),
+            checkpoint_id=f"{name}:{chunk_end_second}",
+        )
+        write_native_departure_fragment(
+            checkpoint_dir / DEPARTURE_FRAGMENT,
+            departure_fragment,
+        )
+        _, completed_rows = station_observer.reconcile_native_departures(
+            records=departure_fragment["records"],
+            missing_numeric_vehicle_ids=set(
+                departure_fragment["missing_numeric_vehicle_ids"]
+            ),
+            time_seconds=chunk_end_second,
+        )
+        station_fragment_rows.extend(completed_rows)
+
+    if telemetry_fragment_path is not None:
+        telemetry_edge_count = validate_native_fragment(
+            telemetry_fragment_path,
+            expected_begin_seconds=chunk_start_second,
+            expected_end_seconds=chunk_end_second,
+        )
+
     try:
         parsed_trip = parse_tripinfo(
             tripinfo_path,
@@ -2538,6 +2884,11 @@ def _run_variant(
         "remaining_vehicle_count": (
             remaining_vehicle_count
         ),
+        "station_observer_state": (
+            station_observer.checkpoint_state()
+            if station_observer is not None
+            else None
+        ),
     }
 
     _write_variant_result(
@@ -2545,6 +2896,9 @@ def _run_variant(
         / "python-state.json.gz",
         python_state,
     )
+
+    if station_observer is not None:
+        write_station_fragment(checkpoint_dir / STATION_FRAGMENT, station_fragment_rows)
 
     chunk_wall_seconds = round(
         time.perf_counter()
@@ -2576,6 +2930,50 @@ def _run_variant(
             ),
             "chunk_wall_seconds": (
                 chunk_wall_seconds
+            ),
+            "telemetry_interval_seconds": (
+                int(telemetry_interval)
+                if telemetry_interval is not None
+                else None
+            ),
+            "telemetry_native_edge_count": (
+                telemetry_edge_count
+            ),
+            "telemetry_edge_catalog_included": (
+                bool(
+                    telemetry_interval is not None
+                    and chunk_start_second == 0
+                )
+            ),
+            "station_telemetry_interval_seconds": (
+                int(payload["station_telemetry_interval_seconds"])
+                if payload.get("station_telemetry_interval_seconds") is not None
+                else None
+            ),
+            "station_observation_plan_digest": (
+                station_observer.plan["observation_plan_digest"]
+                if station_observer is not None
+                else None
+            ),
+            "station_observer_checkpoint_bytes": (
+                len(canonical_json(station_observer.checkpoint_state()).encode())
+                if station_observer is not None
+                else 0
+            ),
+            "station_observer_metrics": (
+                station_observer.metrics if station_observer is not None else None
+            ),
+            "departure_provenance_fragment": (
+                {
+                    "relative_path": DEPARTURE_FRAGMENT,
+                    "content_digest": departure_fragment["content_digest"],
+                    "numeric_record_count": len(departure_fragment["records"]),
+                    "missing_numeric_record_count": len(
+                        departure_fragment["missing_numeric_vehicle_ids"]
+                    ),
+                }
+                if departure_fragment is not None
+                else None
             ),
         },
     )
@@ -3008,7 +3406,7 @@ def _collect_closure_trigger_edges(
     triggers: set[str] = set()
 
     route_source = (
-        gzip.open(route_path, "rb")
+        gzip.open(route_path, "rb")  # noqa: SIM115
         if route_path.suffix == ".gz"
         else route_path.open("rb")
     )
@@ -3167,7 +3565,7 @@ def _write_native_closure_rerouter(
         sorted(str(value) for value in VEHICLE_CLASSES)
     )
 
-    for begin, end in zip(points, points[1:]):
+    for begin, end in pairwise(points):
         active = [
             (closure, sumo_edges)
             for closure, sumo_edges, start, stop

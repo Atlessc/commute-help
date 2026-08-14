@@ -4,7 +4,7 @@
 
 These instructions apply to every coding agent working in this repository.
 
-Read this file and `GAMEPLAN.md` completely before making changes. Treat `GAMEPLAN.md` as the product plan and this file as the implementation contract.
+Read this file and `frontend/COMMUTE_HELP_V2_OCEAN_GAMEPLAN.md` completely before making changes. Treat that game plan as the product plan and this file as the implementation contract.
 
 In this project, **MVP means Max Viable Product**, never Minimum Viable Product.
 
@@ -55,7 +55,7 @@ Frontend API calls must use relative `/api/...` URLs. Configure Vite to proxy `/
 Before editing:
 
 1. Inspect the repository and Git status.
-2. Read `AGENTS.md`, `GAMEPLAN.md`, and relevant existing code.
+2. Read `AGENTS.md`, `frontend/COMMUTE_HELP_V2_OCEAN_GAMEPLAN.md`, and relevant existing code.
 3. Identify the current phase and its acceptance gate.
 4. Preserve unrelated user changes.
 5. State a short plan for nontrivial work.
@@ -275,6 +275,51 @@ For commute decisions, prioritize median, p85/p90/p95, on-time probability, and 
 - Never use production regional data in committed tests; use tiny synthetic SUMO fixtures.
 - Calibration campaigns must resume from completed experiment records and must not tune against frozen final-test data.
 
+### V2 world domains and computational-reuse invariants
+
+The V2 physical-simulation hierarchy is:
+
+```text
+historical calibration artifacts
+    -> regional_baseline
+        -> trip_probe
+        -> regional_scenario
+            -> trip_probe
+```
+
+Cost must be amortized down this hierarchy. Building and calibrating a baseline may be expensive; creating another probe against existing worlds must not repeat that regional work.
+
+The run domains are authoritative:
+
+- `regional_baseline` builds regional traffic without an origin, destination, selected trip, or closure.
+- `regional_scenario` references one immutable parent baseline and applies directed closures or restrictions from a valid parent checkpoint. It never contains a selected-trip origin or destination.
+- `trip_probe` references an already-created baseline checkpoint directly or an already-created scenario checkpoint. It injects the selected vehicle without rebuilding or mutating the referenced parent world.
+
+Required reuse behavior:
+
+- A new trip must not rerun a regional baseline.
+- A new trip must not rerun an existing compatible scenario world.
+- A new origin or destination must not rebuild regional demand.
+- A new closure must reuse the latest causally valid compatible checkpoint from its parent baseline. Replaying farther back is permitted only when causal correctness requires it or no compatible later checkpoint exists.
+- Multiple scenarios may share one baseline, and multiple probes may share one scenario.
+- Parent baseline and scenario artifacts are immutable. Continuation, scenario, and probe workers write new child artifacts.
+- `regional_baseline` identity contains regional-world inputs only, including the applicable source/model/network/demand versions, regional calendar and simulation window, scale, regional seed/RNG policy, and regional driver/traffic-control configuration.
+- `regional_scenario` identity contains its parent baseline identity plus the complete scenario definition, including directed closures/restrictions, awareness and physical restriction times, scenario behavior model, and scenario seed/RNG policy.
+- Checkpoint identity contains the parent world identity plus simulation time.
+- `trip_probe` identity contains its parent checkpoint/world references plus origin, destination, departure time, probe configuration, routing policy, and probe RNG state.
+- Trip origin, trip destination, and trip departure time must never participate in `regional_baseline` or `regional_scenario` identity.
+- Reuse must be visible in manifests and result metadata through parent IDs, checkpoint/fork time, cache disposition, and avoided simulation work. A hidden fallback that recomputes a parent is not a cache hit.
+- Keep temporary 100-second crash-recovery checkpoints distinct from canonical 15-minute world checkpoints. Recovery artifacts do not become reusable worlds until they pass the world promotion and resume/fork-equivalence gates.
+- Baseline and scenario regional states are not required to be identical when probed. Comparisons require equivalent probe conditions: origin, destination, departure conditions, vehicle/driver configuration, and controlled probe RNG policy.
+
+Traffic evidence and calendar identity must remain explicit:
+
+- Historical input is not the same as historical calibration. Do not label a schedule, demand artifact, SUMO result, percentile, or world `historically_calibrated` merely because historical observations were imported.
+- Weekday, exact-date, and season-matched profiles are distinct identities. Never silently pool or substitute one for another.
+- Keep Monday, Tuesday, Wednesday, Thursday, and Friday distinguishable in V2 historical artifacts and baseline worlds.
+- Do not create, infer, or expose historical weekend profiles until observed weekend data passes its own quality and validation gates.
+- Promotion requires reproducible provenance and explicit calibration, held-out validation, and evidence gates; a successful simulation run proves execution, not traffic accuracy.
+
 ## Security and privacy
 
 - Treat home/work locations and commute patterns as sensitive local data.
@@ -318,7 +363,7 @@ At minimum, maintain tests for:
 
 Add regression fixtures for every important routing bug.
 
-Before declaring a phase complete, satisfy its gate in `GAMEPLAN.md`.
+Before declaring a phase complete, satisfy its gate in `frontend/COMMUTE_HELP_V2_OCEAN_GAMEPLAN.md`.
 
 ## Dependency rules
 

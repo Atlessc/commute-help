@@ -1,0 +1,69 @@
+{
+  "candidate": {
+    "artifact": {
+      "artifact_id": "synthetic-world-failing",
+      "artifact_type": "synthetic_regional_world_fixture",
+      "content_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "producer_name": "synthetic_world_fixture",
+      "producer_version": "fixture-v1"
+    },
+    "candidate_kind": "synthetic_fixture",
+    "parent_lineage": []
+  },
+  "criteria_policy": {
+    "criteria": [
+      {
+        "comparison_operator": "gte",
+        "criterion_id": "synthetic.calibration_score",
+        "description": "Fixture-local calibration score only; not a production threshold.",
+        "metric_name": "synthetic_score",
+        "phase": "calibration",
+        "threshold": 90
+      },
+      {
+        "comparison_operator": "lte",
+        "criterion_id": "synthetic.validation_error",
+        "description": "Fixture-local validation error only; not a production threshold.",
+        "metric_name": "synthetic_error",
+        "phase": "validation",
+        "threshold": 10
+      }
+    ],
+    "policy_name": "synthetic_phase_2_3_acceptance",
+    "policy_status": "fixture_local",
+    "policy_version": "fixture-v1"
+  },
+  "evidence": {
+    "comparator": {
+      "calibration_status": "not_calibrated",
+      "comparator_algorithm": "synthetic-comparator-v1",
+      "comparator_name": "synthetic_comparator",
+      "comparator_version": "fixture-v1",
+      "content_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "evidence_level": "synthetic_fixture",
+      "measurement_semantics": "synthetic_flow_only"
+    },
+    "integrity_check_passed": true,
+    "measurement_complete": true,
+    "sources": [
+      {
+        "artifact_id": "synthetic-source",
+        "artifact_type": "synthetic_evidence_fixture",
+        "content_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "producer_name": "synthetic_fixture_builder",
+        "producer_version": "fixture-v1"
+      }
+    ]
+  },
+  "results": {
+    "calibration": [
+      {
+        "criterion_id": "synthetic.calibration_score",
+        "detail": "Synthetic score deliberately misses its fixture-local criterion.",
+        "observed_value": 70,
+        "outcome": "failed",
+        "phase": "calibration"
+      }
+    ]
+  }
+}
