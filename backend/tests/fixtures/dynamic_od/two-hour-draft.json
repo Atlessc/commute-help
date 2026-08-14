@@ -1,0 +1,233 @@
+{
+  "schema_version": 1,
+  "artifact_type": "commute_help_dynamic_od_time_series",
+  "artifact_status": "candidate_unvalidated",
+  "producer_name": "historical_dynamic_od_contract_compiler",
+  "producer_version": "phase-3.1-v1",
+  "algorithm": "evidence-anchored-dynamic-od-v1",
+  "demand_version": "phase-3.1-synthetic-two-hour-v1",
+  "generated_at": "2026-08-13T12:00:00-07:00",
+  "timezone": "America/Los_Angeles",
+  "interval_seconds": 900,
+  "bucket_end_semantics": "half_open_start_inclusive_end_exclusive",
+  "evidence_level": "historical_evidence_derived_candidate",
+  "calibration_status": "not_calibrated",
+  "weekdays": ["Monday"],
+  "bucket_start_minutes": [420, 435, 450, 465, 480, 495, 510, 525],
+  "evidence_sources": [
+    {
+      "evidence_id": "phase-1.2-corpus",
+      "role": "historical_observation_corpus",
+      "artifact_type": "commute_help_historical_observation_corpus",
+      "artifact_id": "portal-calibration-v2-phase-1.2",
+      "content_digest": "09a80fc2e419db11d19925fa078e370afccba4469af476bc1da0e4707844a37b",
+      "producer_name": "portal_calibration_v2_importer",
+      "producer_version": "phase-1.2b",
+      "immutable": true
+    },
+    {
+      "evidence_id": "phase-1.3-profiles",
+      "role": "historical_flow_profile",
+      "artifact_type": "commute_help_historical_edge_profiles",
+      "artifact_id": "historical-edge-profiles-v1",
+      "content_digest": "8bfa6d1032f5b505d3681caec26f63386288f8ae03f020b8c74de93b74ffea9f",
+      "producer_name": "historical_calibration_v2_compiler",
+      "producer_version": "phase-1.3-v1",
+      "immutable": true
+    },
+    {
+      "evidence_id": "phase-1.3-policy",
+      "role": "historical_quality_policy",
+      "artifact_type": "commute_help_historical_quality_policy",
+      "artifact_id": "historical-edge-profiles-v1-quality-policy-v1",
+      "content_digest": "c5771eaa089ab2356fcb1a0fbfa3747ae563382f5bf43f8e971b0f1f7557502c",
+      "producer_name": "historical_calibration_v2_quality_policy",
+      "producer_version": "phase-1.3-policy-v1",
+      "immutable": true
+    },
+    {
+      "evidence_id": "fixture-zone-system",
+      "role": "zone_system",
+      "artifact_type": "synthetic_zone_system_fixture",
+      "artifact_id": "phase-3.1-two-hour-zones",
+      "content_digest": "566df3f1fd0517265f2d2d4bb38fe161e3dd2bd51666f280c4814e08ab974b5c",
+      "producer_name": "phase_3_1_synthetic_fixture",
+      "producer_version": "v1",
+      "immutable": true
+    },
+    {
+      "evidence_id": "fixture-gateways",
+      "role": "gateway_inventory",
+      "artifact_type": "synthetic_gateway_inventory_fixture",
+      "artifact_id": "phase-3.1-two-hour-gateways",
+      "content_digest": "cf87bd2c2aa51792daaa3fa1a406a3810917e812bcca52e2b77a047c7b81d337",
+      "producer_name": "phase_3_1_synthetic_fixture",
+      "producer_version": "v1",
+      "immutable": true
+    },
+    {
+      "evidence_id": "fixture-od-seed",
+      "role": "regional_od_seed",
+      "artifact_type": "synthetic_regional_od_seed_fixture",
+      "artifact_id": "phase-3.1-two-hour-od-seed",
+      "content_digest": "dfa965c54f6b3d5f146a16e2c6f5f64c351dd7dd3c4b4079671501b43e23a001",
+      "producer_name": "phase_3_1_synthetic_fixture",
+      "producer_version": "v1",
+      "immutable": true
+    },
+    {
+      "evidence_id": "fixture-vehicle-class-split",
+      "role": "vehicle_class_split",
+      "artifact_type": "synthetic_vehicle_class_split_fixture",
+      "artifact_id": "phase-3.1-two-hour-class-split",
+      "content_digest": "b04845be4048722e76fdb1a5a120909c9c1ee8bc126b435829a27f30e96884a3",
+      "producer_name": "phase_3_1_synthetic_fixture",
+      "producer_version": "v1",
+      "immutable": true
+    },
+    {
+      "evidence_id": "fixture-bucket-420",
+      "role": "bucket_specific_detector_evidence",
+      "artifact_type": "synthetic_bucket_detector_fixture",
+      "artifact_id": "Monday-420",
+      "content_digest": "50addc7f8afb470e3ab7b2b3830c5872e3e6bc847fdec8e269d5d470999fb599",
+      "producer_name": "phase_3_1_synthetic_fixture",
+      "producer_version": "v1",
+      "immutable": true
+    },
+    {
+      "evidence_id": "fixture-bucket-435",
+      "role": "bucket_specific_detector_evidence",
+      "artifact_type": "synthetic_bucket_detector_fixture",
+      "artifact_id": "Monday-435",
+      "content_digest": "92f8602239d33c1561eb364f66ad8758f2fb83213067ec8401833b71f6c4d250",
+      "producer_name": "phase_3_1_synthetic_fixture",
+      "producer_version": "v1",
+      "immutable": true
+    },
+    {
+      "evidence_id": "fixture-bucket-450",
+      "role": "bucket_specific_detector_evidence",
+      "artifact_type": "synthetic_bucket_detector_fixture",
+      "artifact_id": "Monday-450",
+      "content_digest": "b8a01afee1e3e7c77b6cb6854423e580ffcc232907886147f2115bc72cf21006",
+      "producer_name": "phase_3_1_synthetic_fixture",
+      "producer_version": "v1",
+      "immutable": true
+    },
+    {
+      "evidence_id": "fixture-bucket-465",
+      "role": "bucket_specific_detector_evidence",
+      "artifact_type": "synthetic_bucket_detector_fixture",
+      "artifact_id": "Monday-465",
+      "content_digest": "bda02980471d0d607f8a643fe354de04ca9c2b3f44ed8a7903b454612125c665",
+      "producer_name": "phase_3_1_synthetic_fixture",
+      "producer_version": "v1",
+      "immutable": true
+    },
+    {
+      "evidence_id": "fixture-bucket-480",
+      "role": "bucket_specific_detector_evidence",
+      "artifact_type": "synthetic_bucket_detector_fixture",
+      "artifact_id": "Monday-480",
+      "content_digest": "eca02e3d4c1dbf8d09c933cc33fa6564ba37b308df019d952e4e9a98b545e6b0",
+      "producer_name": "phase_3_1_synthetic_fixture",
+      "producer_version": "v1",
+      "immutable": true
+    },
+    {
+      "evidence_id": "fixture-bucket-495",
+      "role": "bucket_specific_detector_evidence",
+      "artifact_type": "synthetic_bucket_detector_fixture",
+      "artifact_id": "Monday-495",
+      "content_digest": "464b9edad495f7e2125dae17114b01d813f169118c0752c341edd51fd0d8e1fd",
+      "producer_name": "phase_3_1_synthetic_fixture",
+      "producer_version": "v1",
+      "immutable": true
+    },
+    {
+      "evidence_id": "fixture-bucket-510",
+      "role": "bucket_specific_detector_evidence",
+      "artifact_type": "synthetic_bucket_detector_fixture",
+      "artifact_id": "Monday-510",
+      "content_digest": "ede119f8a459dac2504c448bdd78e7b3b3146c1c340a8dcfded08bf22657b5ed",
+      "producer_name": "phase_3_1_synthetic_fixture",
+      "producer_version": "v1",
+      "immutable": true
+    },
+    {
+      "evidence_id": "fixture-bucket-525",
+      "role": "bucket_specific_detector_evidence",
+      "artifact_type": "synthetic_bucket_detector_fixture",
+      "artifact_id": "Monday-525",
+      "content_digest": "677032604fdee0e71ba58aac7ff8c042cb0e0dcfad7fcfd11b75be1d8976e8ed",
+      "producer_name": "phase_3_1_synthetic_fixture",
+      "producer_version": "v1",
+      "immutable": true
+    }
+  ],
+  "seed_policy": {
+    "base_seed": 31001,
+    "rng_algorithm": "python-mt19937-v1",
+    "seed_derivation": "sha256-base-seed-demand-version-weekday-bucket-vehicle-class-v1",
+    "application_status": "declared_for_phase-3.2_not_applied"
+  },
+  "assignment_policy": {
+    "policy_name": "regional-zone-pair-assignment-v1",
+    "path_policy_status": "deferred_to_phase-3.2",
+    "selected_trip_independent": true
+  },
+  "vehicle_semantics": {
+    "real_vehicles_per_modeled_vehicle": 1.0,
+    "semantics": "one_sumo_vehicle_per_modeled_vehicle_trip",
+    "stochastic_rounding_status": "deferred_to_phase-3.2"
+  },
+  "fallback_policy": {
+    "weekday_substitution": "prohibited",
+    "weekday_pooling": "prohibited",
+    "season_substitution": "prohibited",
+    "exact_date_substitution": "prohibited",
+    "missing_bucket_interpolation": "prohibited"
+  },
+  "temporal_regularization": {
+    "policy_name": "evidence-anchored-adjacent-matrix-v1",
+    "adjacent_change_rule": "target_change_requires_bucket_specific_detector_evidence",
+    "oscillation_rule": "direction_reversal_requires_bucket_specific_detector_evidence",
+    "production_numeric_change_threshold": null,
+    "threshold_status": "unresolved_not_invented"
+  },
+  "rows": [
+    {"weekday":"Monday","bucket_start_minute":420,"origin_zone_id":"internal-west","origin_zone_type":"internal","destination_zone_id":"internal-east","destination_zone_type":"internal","movement_class":"internal_internal","vehicle_class":"passenger_sov","target_vehicle_trips":100,"target_flow_vph":400,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-od-seed","fixture-bucket-420"],"adjacent_change_evidence_ids":[]},
+    {"weekday":"Monday","bucket_start_minute":420,"origin_zone_id":"gateway-north","origin_zone_type":"gateway","destination_zone_id":"internal-east","destination_zone_type":"internal","movement_class":"gateway_internal","vehicle_class":"passenger_sov","target_vehicle_trips":50,"target_flow_vph":200,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-gateways","fixture-bucket-420"],"adjacent_change_evidence_ids":[]},
+    {"weekday":"Monday","bucket_start_minute":420,"origin_zone_id":"internal-west","origin_zone_type":"internal","destination_zone_id":"gateway-south","destination_zone_type":"gateway","movement_class":"internal_gateway","vehicle_class":"passenger_sov","target_vehicle_trips":40,"target_flow_vph":160,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-gateways","fixture-bucket-420"],"adjacent_change_evidence_ids":[]},
+    {"weekday":"Monday","bucket_start_minute":420,"origin_zone_id":"gateway-north","origin_zone_type":"gateway","destination_zone_id":"gateway-south","destination_zone_type":"gateway","movement_class":"gateway_gateway","vehicle_class":"heavy_truck","target_vehicle_trips":10,"target_flow_vph":40,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-gateways","fixture-vehicle-class-split","fixture-bucket-420"],"adjacent_change_evidence_ids":[]},
+    {"weekday":"Monday","bucket_start_minute":435,"origin_zone_id":"internal-west","origin_zone_type":"internal","destination_zone_id":"internal-east","destination_zone_type":"internal","movement_class":"internal_internal","vehicle_class":"passenger_sov","target_vehicle_trips":110,"target_flow_vph":440,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-od-seed","fixture-bucket-435"],"adjacent_change_evidence_ids":["fixture-bucket-435"]},
+    {"weekday":"Monday","bucket_start_minute":435,"origin_zone_id":"gateway-north","origin_zone_type":"gateway","destination_zone_id":"internal-east","destination_zone_type":"internal","movement_class":"gateway_internal","vehicle_class":"passenger_sov","target_vehicle_trips":55,"target_flow_vph":220,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-gateways","fixture-bucket-435"],"adjacent_change_evidence_ids":["fixture-bucket-435"]},
+    {"weekday":"Monday","bucket_start_minute":435,"origin_zone_id":"internal-west","origin_zone_type":"internal","destination_zone_id":"gateway-south","destination_zone_type":"gateway","movement_class":"internal_gateway","vehicle_class":"passenger_sov","target_vehicle_trips":44,"target_flow_vph":176,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-gateways","fixture-bucket-435"],"adjacent_change_evidence_ids":["fixture-bucket-435"]},
+    {"weekday":"Monday","bucket_start_minute":435,"origin_zone_id":"gateway-north","origin_zone_type":"gateway","destination_zone_id":"gateway-south","destination_zone_type":"gateway","movement_class":"gateway_gateway","vehicle_class":"heavy_truck","target_vehicle_trips":11,"target_flow_vph":44,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-gateways","fixture-vehicle-class-split","fixture-bucket-435"],"adjacent_change_evidence_ids":["fixture-bucket-435"]},
+    {"weekday":"Monday","bucket_start_minute":450,"origin_zone_id":"internal-west","origin_zone_type":"internal","destination_zone_id":"internal-east","destination_zone_type":"internal","movement_class":"internal_internal","vehicle_class":"passenger_sov","target_vehicle_trips":120,"target_flow_vph":480,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-od-seed","fixture-bucket-450"],"adjacent_change_evidence_ids":["fixture-bucket-450"]},
+    {"weekday":"Monday","bucket_start_minute":450,"origin_zone_id":"gateway-north","origin_zone_type":"gateway","destination_zone_id":"internal-east","destination_zone_type":"internal","movement_class":"gateway_internal","vehicle_class":"passenger_sov","target_vehicle_trips":60,"target_flow_vph":240,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-gateways","fixture-bucket-450"],"adjacent_change_evidence_ids":["fixture-bucket-450"]},
+    {"weekday":"Monday","bucket_start_minute":450,"origin_zone_id":"internal-west","origin_zone_type":"internal","destination_zone_id":"gateway-south","destination_zone_type":"gateway","movement_class":"internal_gateway","vehicle_class":"passenger_sov","target_vehicle_trips":48,"target_flow_vph":192,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-gateways","fixture-bucket-450"],"adjacent_change_evidence_ids":["fixture-bucket-450"]},
+    {"weekday":"Monday","bucket_start_minute":450,"origin_zone_id":"gateway-north","origin_zone_type":"gateway","destination_zone_id":"gateway-south","destination_zone_type":"gateway","movement_class":"gateway_gateway","vehicle_class":"heavy_truck","target_vehicle_trips":12,"target_flow_vph":48,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-gateways","fixture-vehicle-class-split","fixture-bucket-450"],"adjacent_change_evidence_ids":["fixture-bucket-450"]},
+    {"weekday":"Monday","bucket_start_minute":465,"origin_zone_id":"internal-west","origin_zone_type":"internal","destination_zone_id":"internal-east","destination_zone_type":"internal","movement_class":"internal_internal","vehicle_class":"passenger_sov","target_vehicle_trips":130,"target_flow_vph":520,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-od-seed","fixture-bucket-465"],"adjacent_change_evidence_ids":["fixture-bucket-465"]},
+    {"weekday":"Monday","bucket_start_minute":465,"origin_zone_id":"gateway-north","origin_zone_type":"gateway","destination_zone_id":"internal-east","destination_zone_type":"internal","movement_class":"gateway_internal","vehicle_class":"passenger_sov","target_vehicle_trips":65,"target_flow_vph":260,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-gateways","fixture-bucket-465"],"adjacent_change_evidence_ids":["fixture-bucket-465"]},
+    {"weekday":"Monday","bucket_start_minute":465,"origin_zone_id":"internal-west","origin_zone_type":"internal","destination_zone_id":"gateway-south","destination_zone_type":"gateway","movement_class":"internal_gateway","vehicle_class":"passenger_sov","target_vehicle_trips":52,"target_flow_vph":208,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-gateways","fixture-bucket-465"],"adjacent_change_evidence_ids":["fixture-bucket-465"]},
+    {"weekday":"Monday","bucket_start_minute":465,"origin_zone_id":"gateway-north","origin_zone_type":"gateway","destination_zone_id":"gateway-south","destination_zone_type":"gateway","movement_class":"gateway_gateway","vehicle_class":"heavy_truck","target_vehicle_trips":13,"target_flow_vph":52,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-gateways","fixture-vehicle-class-split","fixture-bucket-465"],"adjacent_change_evidence_ids":["fixture-bucket-465"]},
+    {"weekday":"Monday","bucket_start_minute":480,"origin_zone_id":"internal-west","origin_zone_type":"internal","destination_zone_id":"internal-east","destination_zone_type":"internal","movement_class":"internal_internal","vehicle_class":"passenger_sov","target_vehicle_trips":140,"target_flow_vph":560,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-od-seed","fixture-bucket-480"],"adjacent_change_evidence_ids":["fixture-bucket-480"]},
+    {"weekday":"Monday","bucket_start_minute":480,"origin_zone_id":"gateway-north","origin_zone_type":"gateway","destination_zone_id":"internal-east","destination_zone_type":"internal","movement_class":"gateway_internal","vehicle_class":"passenger_sov","target_vehicle_trips":70,"target_flow_vph":280,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-gateways","fixture-bucket-480"],"adjacent_change_evidence_ids":["fixture-bucket-480"]},
+    {"weekday":"Monday","bucket_start_minute":480,"origin_zone_id":"internal-west","origin_zone_type":"internal","destination_zone_id":"gateway-south","destination_zone_type":"gateway","movement_class":"internal_gateway","vehicle_class":"passenger_sov","target_vehicle_trips":56,"target_flow_vph":224,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-gateways","fixture-bucket-480"],"adjacent_change_evidence_ids":["fixture-bucket-480"]},
+    {"weekday":"Monday","bucket_start_minute":480,"origin_zone_id":"gateway-north","origin_zone_type":"gateway","destination_zone_id":"gateway-south","destination_zone_type":"gateway","movement_class":"gateway_gateway","vehicle_class":"heavy_truck","target_vehicle_trips":14,"target_flow_vph":56,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-gateways","fixture-vehicle-class-split","fixture-bucket-480"],"adjacent_change_evidence_ids":["fixture-bucket-480"]},
+    {"weekday":"Monday","bucket_start_minute":495,"origin_zone_id":"internal-west","origin_zone_type":"internal","destination_zone_id":"internal-east","destination_zone_type":"internal","movement_class":"internal_internal","vehicle_class":"passenger_sov","target_vehicle_trips":150,"target_flow_vph":600,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-od-seed","fixture-bucket-495"],"adjacent_change_evidence_ids":["fixture-bucket-495"]},
+    {"weekday":"Monday","bucket_start_minute":495,"origin_zone_id":"gateway-north","origin_zone_type":"gateway","destination_zone_id":"internal-east","destination_zone_type":"internal","movement_class":"gateway_internal","vehicle_class":"passenger_sov","target_vehicle_trips":75,"target_flow_vph":300,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-gateways","fixture-bucket-495"],"adjacent_change_evidence_ids":["fixture-bucket-495"]},
+    {"weekday":"Monday","bucket_start_minute":495,"origin_zone_id":"internal-west","origin_zone_type":"internal","destination_zone_id":"gateway-south","destination_zone_type":"gateway","movement_class":"internal_gateway","vehicle_class":"passenger_sov","target_vehicle_trips":60,"target_flow_vph":240,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-gateways","fixture-bucket-495"],"adjacent_change_evidence_ids":["fixture-bucket-495"]},
+    {"weekday":"Monday","bucket_start_minute":495,"origin_zone_id":"gateway-north","origin_zone_type":"gateway","destination_zone_id":"gateway-south","destination_zone_type":"gateway","movement_class":"gateway_gateway","vehicle_class":"heavy_truck","target_vehicle_trips":15,"target_flow_vph":60,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-gateways","fixture-vehicle-class-split","fixture-bucket-495"],"adjacent_change_evidence_ids":["fixture-bucket-495"]},
+    {"weekday":"Monday","bucket_start_minute":510,"origin_zone_id":"internal-west","origin_zone_type":"internal","destination_zone_id":"internal-east","destination_zone_type":"internal","movement_class":"internal_internal","vehicle_class":"passenger_sov","target_vehicle_trips":160,"target_flow_vph":640,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-od-seed","fixture-bucket-510"],"adjacent_change_evidence_ids":["fixture-bucket-510"]},
+    {"weekday":"Monday","bucket_start_minute":510,"origin_zone_id":"gateway-north","origin_zone_type":"gateway","destination_zone_id":"internal-east","destination_zone_type":"internal","movement_class":"gateway_internal","vehicle_class":"passenger_sov","target_vehicle_trips":80,"target_flow_vph":320,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-gateways","fixture-bucket-510"],"adjacent_change_evidence_ids":["fixture-bucket-510"]},
+    {"weekday":"Monday","bucket_start_minute":510,"origin_zone_id":"internal-west","origin_zone_type":"internal","destination_zone_id":"gateway-south","destination_zone_type":"gateway","movement_class":"internal_gateway","vehicle_class":"passenger_sov","target_vehicle_trips":64,"target_flow_vph":256,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-gateways","fixture-bucket-510"],"adjacent_change_evidence_ids":["fixture-bucket-510"]},
+    {"weekday":"Monday","bucket_start_minute":510,"origin_zone_id":"gateway-north","origin_zone_type":"gateway","destination_zone_id":"gateway-south","destination_zone_type":"gateway","movement_class":"gateway_gateway","vehicle_class":"heavy_truck","target_vehicle_trips":16,"target_flow_vph":64,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-gateways","fixture-vehicle-class-split","fixture-bucket-510"],"adjacent_change_evidence_ids":["fixture-bucket-510"]},
+    {"weekday":"Monday","bucket_start_minute":525,"origin_zone_id":"internal-west","origin_zone_type":"internal","destination_zone_id":"internal-east","destination_zone_type":"internal","movement_class":"internal_internal","vehicle_class":"passenger_sov","target_vehicle_trips":170,"target_flow_vph":680,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-od-seed","fixture-bucket-525"],"adjacent_change_evidence_ids":["fixture-bucket-525"]},
+    {"weekday":"Monday","bucket_start_minute":525,"origin_zone_id":"gateway-north","origin_zone_type":"gateway","destination_zone_id":"internal-east","destination_zone_type":"internal","movement_class":"gateway_internal","vehicle_class":"passenger_sov","target_vehicle_trips":85,"target_flow_vph":340,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-gateways","fixture-bucket-525"],"adjacent_change_evidence_ids":["fixture-bucket-525"]},
+    {"weekday":"Monday","bucket_start_minute":525,"origin_zone_id":"internal-west","origin_zone_type":"internal","destination_zone_id":"gateway-south","destination_zone_type":"gateway","movement_class":"internal_gateway","vehicle_class":"passenger_sov","target_vehicle_trips":68,"target_flow_vph":272,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-gateways","fixture-bucket-525"],"adjacent_change_evidence_ids":["fixture-bucket-525"]},
+    {"weekday":"Monday","bucket_start_minute":525,"origin_zone_id":"gateway-north","origin_zone_type":"gateway","destination_zone_id":"gateway-south","destination_zone_type":"gateway","movement_class":"gateway_gateway","vehicle_class":"heavy_truck","target_vehicle_trips":17,"target_flow_vph":68,"evidence_ids":["phase-1.2-corpus","phase-1.3-profiles","phase-1.3-policy","fixture-gateways","fixture-vehicle-class-split","fixture-bucket-525"],"adjacent_change_evidence_ids":["fixture-bucket-525"]}
+  ]
+}

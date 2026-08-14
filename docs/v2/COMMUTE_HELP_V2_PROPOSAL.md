@@ -1125,6 +1125,305 @@ If shareable from ODOT/TPAU/MPO partners:
 
 These inputs could greatly reduce inverse inference from counts alone.
 
+## Phase 3.1 — Dynamic OD contract
+
+### Objective
+
+Define the evidence and identity contract for weekday-specific, 15-minute
+regional OD matrices before any SUMO demand file is generated or any demand is
+tuned.
+
+### Approach and artifact identity
+
+The typed `commute_help_dynamic_od_time_series` schema uses producer
+`historical_dynamic_od_contract_compiler / phase-3.1-v1` and algorithm
+`evidence-anchored-dynamic-od-v1`. Each row identifies:
+
+- Portland local Monday–Friday weekday;
+- 15-minute `bucket_start_minute` with `[start, end)` semantics;
+- origin and destination zone IDs and zone types;
+- the explicit gateway-aware movement class derived from those zone types;
+- vehicle class;
+- target vehicle trips and the exact corresponding VPH value;
+- immutable evidence references; and
+- bucket-specific evidence supporting a change from the preceding matrix.
+
+The artifact identity includes legitimate regional-world inputs: demand
+version, weekday/buckets, OD targets, vehicle classes, evidence lineage,
+assignment policy, and RNG policy. It excludes selected-trip origin,
+destination, departure, and probe identity. Those remain questions asked of a
+regional world, not causes of that world.
+
+The schema carries a deterministic semantic content digest that excludes only
+`generated_at`; each OD row also has a deterministic identity at the physical
+weekday/bucket/zone-pair/vehicle-class grain. Writes use atomic replacement.
+
+### Why this approach was selected
+
+Comparator-v2 proves the current Monday 17:00 world is severely underloaded,
+but WAPE, MAE, signed bias, and station/corridor ratios do not identify the OD
+matrix that caused those counts. A global multiplier would conceal origin,
+destination, gateway, vehicle-class, and time structure. The contract therefore
+keeps those dimensions explicit and leaves inference/calibration to later
+bounded phases.
+
+### Evidence and lineage
+
+Every artifact must reference immutable evidence that includes the frozen
+Phase 1.2 observation corpus, Phase 1.3 historical flow profiles, and Phase 1.3
+quality policy. The synthetic two-hour gate uses the accepted digests:
+
+- corpus: `09a80fc2e419db11d19925fa078e370afccba4469af476bc1da0e4707844a37b`;
+- profiles: `8bfa6d1032f5b505d3681caec26f63386288f8ae03f020b8c74de93b74ffea9f`;
+- quality policy: `c5771eaa089ab2356fcb1a0fbfa3747ae563382f5bf43f8e971b0f1f7557502c`.
+
+Additional zone-system, gateway-inventory, regional-OD-prior, vehicle-class,
+and bucket-specific detector evidence are separately typed. A row cannot cite
+an unknown evidence identity.
+
+### Conservation, RNG, and 1:1 semantics
+
+Each weekday/bucket matrix retains the same explicit OD/vehicle-class keys,
+including explicit zero targets when appropriate. Per-bucket totals must equal
+the sum of row targets and the sum of gateway-aware movement-class totals.
+For a 900-second bucket:
+
+```text
+target_flow_vph = target_vehicle_trips × 4
+```
+
+The contract fixes one SUMO vehicle per modeled vehicle trip and carries a
+base seed plus deterministic seed-derivation policy. Phase 3.1 does not sample,
+round, place departures, choose connectors, or assign paths; those operations
+remain explicitly deferred to Phase 3.2.
+
+### Temporal regularization and fallback policy
+
+Phase 3.1 does not invent a numerical definition of a “wild” matrix change.
+Instead, `evidence-anchored-adjacent-matrix-v1` applies a stronger provenance
+rule: a changed target in an adjacent 15-minute matrix must cite
+bucket-specific detector evidence, and any direction reversal is governed by
+the same evidence requirement. The production numerical change threshold is
+explicitly unresolved rather than hidden in a fixture.
+
+Missing buckets are rejected, not interpolated. Weekday pooling, weekday
+substitution, season substitution, exact-date substitution, and missing-bucket
+interpolation are all explicitly prohibited in contract v1. No weekend can be
+synthesized.
+
+### Validation evidence
+
+The deterministic synthetic gate covers Monday 07:00–09:00 as eight complete
+15-minute matrices. It contains internal→internal, gateway→internal,
+internal→gateway, and gateway→gateway movements plus passenger and heavy-truck
+classes. Tests prove conservation, units, immutable lineage, evidence-gated
+adjacent changes, no implicit fallback, selected-trip-independent identity,
+deterministic digest/ordering, and atomic round trips. It is a schema fixture,
+not calibrated regional demand.
+
+### Alternatives investigated or rejected
+
+- A global multiplier derived from Comparator-v2 error is rejected because it
+  cannot identify OD structure.
+- Monday–Friday pooling and cross-weekday substitution are rejected because
+  Phase 1 preserves weekday evidence independently.
+- Unexplained interpolation and unconstrained independent bucket matrices are
+  rejected because they can manufacture temporal demand structure.
+- Phase 3.2 departure placement, balanced stochastic rounding, and path choice
+  are deliberately not pulled forward into this contract phase.
+
+### Current limitations and data needed
+
+Phase 3.1 defines how evidence-backed OD demand must be represented; it does
+not derive a production Portland OD matrix. Detector counts constrain
+screenlines and cross-sections but do not uniquely identify origin and
+destination. Production demand still needs a reviewed OD prior, zone system,
+gateway totals, vehicle-class/freight splits, and bucket-specific evidence.
+ODOT TPAU, Metro, RTC, or other MPO matrices, TAZ definitions, time-of-day
+factors, external trips, freight demand, and screenline procedures could close
+those gaps. Such guidance remains proposed evidence until reviewed and
+authorized; it does not silently replace this contract.
+
+### Downstream dependency and next gate
+
+Phase 3.2 may consume only a validated Phase 3.1 artifact and must implement
+deterministic within-bucket departure generation with balanced stochastic
+rounding and exact per-bucket conservation. Its two-hour gate must prove no
+bucket leakage and same-seed determinism. Phase 3.1 does not run SUMO, modify
+the network or measurements, or claim that any demand is calibrated.
+
+## Phase 3.2 — Time-sliced SUMO demand generation
+
+### Objective
+
+Materialize a validated Phase 3.1 weekday OD artifact as deterministic SUMO
+trip demand while preserving the source 15-minute matrix boundaries. Phase 3.2
+generates demand evidence; it does not simulate, route, calibrate, or tune it.
+
+### Approach and output lineage
+
+The typed `commute_help_time_sliced_sumo_demand` artifact is produced by
+`dynamic_od_sumo_demand_generator / phase-3.2-v1` using
+`bucket-contained-balanced-rounding-v1`. It contains:
+
+```text
+time-sliced-demand.trips.xml.gz
+time-sliced-demand-manifest.json
+```
+
+The compressed XML contains one SUMO `<trip>` per represented modeled vehicle,
+with explicit `fromTaz`, `toTaz`, vehicle type, deterministic identity, and
+departure time. It is intentionally labeled `unrouted_zone_pair_demand`:
+connector selection and route/path assignment are downstream work, not hidden
+inside this phase.
+
+The manifest preserves the Phase 3.1 content digest and demand version, all
+source evidence digests, weekday, bucket coverage, assignment policy, source
+and effective seed, seed-derivation method, 1:1 scale, generated count,
+per-row/per-bucket rounding audits, movement- and vehicle-class conservation,
+departure-boundary audit, compressed and uncompressed file hashes, and a
+deterministic semantic content digest. Atomic directory promotion prevents a
+partial XML or manifest from becoming authoritative.
+
+### Half-open bucket placement
+
+Each source bucket maps directly from local-day minutes to simulation seconds:
+
+```text
+interval_start_seconds = bucket_start_minute × 60
+interval_end_seconds   = interval_start_seconds + 900
+
+interval_start_seconds <= departure < interval_end_seconds
+```
+
+Placement is independently seeded at the source OD-row grain. A trip from the
+07:00 matrix cannot depart at or after 07:15, and a trip from the 07:15 matrix
+cannot depart before 07:15. Demand is never spread across the whole two-hour
+window.
+
+### Balanced stochastic rounding and conservation
+
+Fractional targets are jointly rounded within each weekday/bucket. The
+algorithm first floors every row, stochastically rounds the exact bucket total,
+then assigns the remaining vehicles among fractional rows using deterministic
+weighted sampling without replacement. At 1:1 scale this guarantees:
+
+```text
+absolute per-row rounding error < 1 modeled vehicle trip
+absolute per-bucket aggregate error < 1 modeled vehicle trip
+```
+
+Rounding occurs before departure placement and cannot transfer a vehicle to an
+adjacent bucket. The manifest reports source target, represented target,
+rounding error, and pass/fail state for every row and bucket. Movement- and
+vehicle-class totals remain visible; the accepted integer fixture conserves
+them exactly.
+
+### RNG and identity contract
+
+Phase 3.2 preserves the Phase 3.1 base seed and source RNG policy. Derived
+rounding and placement streams use:
+
+```text
+sha256(effective seed, demand version, weekday, bucket, operation scope)
+```
+
+The same source artifact and effective seed therefore produce byte-identical
+demand and identical semantic/file digests. A legitimate seed override changes
+stochastic departure placement and artifact identity while leaving source
+targets, bucket membership, 1:1 scale, and conservation bounds unchanged.
+
+Regional demand identity contains only regional inputs. It contains no selected
+trip origin, destination, departure, app-edge endpoints, or probe identity.
+
+### Synthetic two-hour evidence
+
+The accepted Monday 07:00–09:00 fixture produced:
+
+```text
+source Phase 3.1 digest:
+b6a854b6f5c156fd0951a6e5eed781ae5a88e22b2a47b29a0090752aeba4167b
+
+Phase 3.2 content digest:
+acf19e7ad77d2ec5fb7740445392c2dacaf6f7a5627e11ad8b05e8a494e6179a
+
+compressed demand SHA-256:
+9d666ab9bad2f00ffe4d0b2053194b8b1d73ee5c97dbcfb826673e7a9f5c2cdb
+
+uncompressed demand SHA-256:
+12aa7d2ec8bfad795e083a24cf2d39cbde80762e9a7393f1ba8d5edf071c0ab2
+
+8 buckets
+32 source OD rows
+2,160 target trips
+2,160 generated SUMO trips
+0 aggregate rounding error
+0 bucket leakage
+0 interval-end departures
+0 duplicate vehicle identities
+```
+
+Bucket targets and generated counts were exactly:
+
+```text
+07:00  200 → 200
+07:15  220 → 220
+07:30  240 → 240
+07:45  260 → 260
+08:00  280 → 280
+08:15  300 → 300
+08:30  320 → 320
+08:45  340 → 340
+```
+
+A repeat with the same seed reproduced both content and demand-file hashes
+exactly. Seed `31002` retained all 2,160 targets and zero leakage but produced a
+different demand hash
+`f6e79a279e5fa8539213e70aa7f8fa4c394aee4bda95631ebf84efcadc1a3a5b`,
+proving placement variability without target mutation. Separate fractional
+fixtures prove the balanced-rounding bounds rather than relying only on the
+integer production gate.
+
+### Why this approach was selected
+
+The prior snapshot generator accepted one start-time target and spread its
+departures across a long period. That changes the temporal meaning of a
+15-minute target and can shift peak demand into neighboring intervals. Direct
+bucket containment preserves the Phase 3.1 evidence grain. Individual trips
+also make departure identity and leakage directly auditable.
+
+### Alternatives investigated or rejected
+
+- Whole-window departure smearing is rejected because it destroys bucket
+  identity.
+- A global multiplier is rejected because Comparator-v2 residuals do not
+  identify OD structure.
+- Independent per-row rounding is rejected because its errors can accumulate
+  without a bucket-level conservation bound.
+- Route/path assignment is deferred rather than guessed; Phase 3.4 owns bounded
+  alternative path sets and probabilities.
+- Weekday substitution, pooling, weekend synthesis, and missing-bucket
+  interpolation remain prohibited by the source contract.
+
+### Current limitations and external data needs
+
+The synthetic artifact proves generation mechanics, not Portland demand
+accuracy. The output still needs reviewed production OD matrices, zone/TAZ and
+connector artifacts, gateway/external trips, freight and vehicle-class splits,
+and bucket-specific targets before a real regional experiment. ODOT TPAU,
+Metro, RTC, and MPO model inputs could improve those layers but remain proposed
+evidence until reviewed and authorized. No network, capacity, speed, signal,
+vehicle behavior, station, comparator, or closure method changed.
+
+### Downstream dependency and next gate
+
+Phase 3.3 may compare the existing snapshot demand with dynamic 15-minute
+demand only in a separately authorized bounded experiment, initially a
+high-value window such as 04:00–10:00. It must use Comparator-v2 and diagnose
+OD distribution if peak flow/timing fails to improve or speed residuals degrade
+catastrophically. Phase 3.2 itself ran no SUMO simulation and made no calibration
+or promotion claim.
+
 ---
 
 # 15. Phase 4 — Reusable Baseline Worlds
@@ -1410,11 +1709,15 @@ Phase 2.2e regional observer              COMPLETE
 Phase 2.2f departure provenance           COMPLETE
 Phase 2.2g comparator-v2                  COMPLETE / ACCEPTED FLOW RULER
 Phase 2.3 promotion gates                 COMPLETE
-Phase 3 dynamic demand                    UNBLOCKED / NOT STARTED
+Phase 3.1 dynamic OD contract             COMPLETE
+Phase 3.2 time-sliced demand generation   COMPLETE
+Phase 3.3 bounded dynamic experiment      UNBLOCKED / NOT STARTED
 ```
 
-The FLOW measurement instrument and promotion machinery are accepted. Phase 3
-may begin only as a separate task; no demand work occurred in Phase 2.3.
+The FLOW measurement instrument, promotion machinery, dynamic OD contract, and
+bucket-contained demand generator are accepted. Phase 3.2 produced only an
+unrouted synthetic demand artifact; no SUMO run or traffic tuning occurred.
+Phase 3.3 may begin only as a separate authorized task.
 
 ---
 
