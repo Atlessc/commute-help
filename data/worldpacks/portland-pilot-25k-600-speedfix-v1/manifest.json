@@ -1,0 +1,128 @@
+{
+  "classification": "synthetic Portland pilot demand; architecture validation only; not calibrated traffic truth",
+  "created_at_utc": "2026-08-16T09:02:49.012847+00:00",
+  "engine": {
+    "name": "moss",
+    "version": "build.260815.232605.862576334[Release]"
+  },
+  "format": "commute-help-worldpack",
+  "inputs": {
+    "map": {
+      "path": "portland-pilot/portland-core-map.pb",
+      "sha256": "52c32542de682d82d7f141cf89f136790edce79936f7f7e10c8fe16e582d1f30"
+    },
+    "mapping": {
+      "path": "portland-pilot/portland-core-id2uid.json",
+      "sha256": "e5af6fa4f3f17b7cda87463e02bfebf96230416b7d2011b7791418129f70bb3e"
+    },
+    "persons": {
+      "path": "portland-pilot/portland-core-25k-persons.pb",
+      "sha256": "455f90f5d2311d2e8593d5a4fb316740952309129c12811e15c5e5205a3df448"
+    }
+  },
+  "network": {
+    "driving_lane_type": {
+      "name": "LANE_TYPE_DRIVING",
+      "value": 1
+    },
+    "junction_count": 6950,
+    "lane_count": 81774,
+    "road_count": 18425,
+    "roads_without_driving_lanes": 0
+  },
+  "road_id_mapping": {
+    "direction": "MOSS numeric road ID -> original/source SUMO edge ID",
+    "mapped": 18425,
+    "unmapped": 0
+  },
+  "road_state_semantics": {
+    "junction_lane_behavior": "persons whose lane_parent_id is a junction are not attributed to a road in WorldPack v0",
+    "mean_speed_mps": "instantaneous arithmetic mean of active DRIVING person speeds whose lane_parent_id is a MOSS road",
+    "vehicle_count": "active DRIVING persons whose lane_parent_id is the road",
+    "waiting_vehicle_count": "same population with v < 0.1 m/s"
+  },
+  "road_static_reduction": {
+    "free_flow_speed_mps": "maximum positive max_speed across driving lanes",
+    "road_length_m": "median length of valid driving lanes"
+  },
+  "runtime": {
+    "effective_simulation_rtf": 6.1828872532165375,
+    "engine_init_wall_seconds": 1.3983303760032868,
+    "export_wall_seconds": 0.945580744984909,
+    "file_write_wall_seconds": 0.5385345370013965,
+    "output_bytes": 3546954,
+    "simulation_wall_seconds": 96.09646052592143,
+    "snapshot_collection_wall_seconds": 0.40704620798351243,
+    "world_compile_wall_seconds": 97.04204127090634
+  },
+  "simulation": {
+    "actual_source_person_count": 25000,
+    "device": 0,
+    "person_limit": 25000,
+    "sample_interval_seconds": 5,
+    "seed": 43,
+    "simulation_seconds": 600,
+    "snapshot_count": 121,
+    "step_interval_seconds": 1,
+    "waiting_speed_threshold_mps": 0.1
+  },
+  "state_schema": {
+    "road-state.npz": {
+      "mean_speed_mps": {
+        "dtype": "float32",
+        "shape": [
+          121,
+          18425
+        ]
+      },
+      "road_ids": {
+        "dtype": "int64",
+        "shape": [
+          18425
+        ]
+      },
+      "sample_times_s": {
+        "dtype": "float32",
+        "shape": [
+          121
+        ]
+      },
+      "vehicle_count": {
+        "dtype": "uint32",
+        "shape": [
+          121,
+          18425
+        ]
+      },
+      "waiting_vehicle_count": {
+        "dtype": "uint32",
+        "shape": [
+          121,
+          18425
+        ]
+      }
+    },
+    "road-static.npz": {
+      "free_flow_speed_mps": {
+        "dtype": "float32",
+        "shape": [
+          18425
+        ]
+      },
+      "road_ids": {
+        "dtype": "int64",
+        "shape": [
+          18425
+        ]
+      },
+      "road_length_m": {
+        "dtype": "float32",
+        "shape": [
+          18425
+        ]
+      }
+    }
+  },
+  "version": 0,
+  "world_id": "wp0-422b0f408175b6fcc8873bbf"
+}
