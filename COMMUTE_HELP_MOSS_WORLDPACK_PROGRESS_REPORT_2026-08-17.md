@@ -10,7 +10,7 @@
 ## 1. Executive summary
 
 The project began with a practical question: can a Windows PC with a Quadro P4000 perform the expensive traffic-simulation work for Commute Help while the Mac remains the application-development and routing machine?
-
+ 
 The answer is now **yes**.
 
 The architecture has been demonstrated end to end:
