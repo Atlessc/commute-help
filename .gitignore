@@ -48,3 +48,6 @@ AGENTS.md
 /tmp
 /tmp/pdfs
 /output
+
+# Generated WorldPack traffic worlds
+data/worldpacks/
