@@ -326,7 +326,11 @@ def build_station_cross_sections_v2_r3(
     row_provenance = pd.DataFrame(provenance_rows).sort_values(
         "station_id", kind="mergesort"
     ).reset_index(drop=True)
-    ensure_unchanged_rows_exact(parent_by_id, candidate.set_index("station_id"), unchanged_station_ids)
+    ensure_unchanged_rows_exact(
+        parent_by_id,
+        candidate.set_index("station_id", drop=False),
+        unchanged_station_ids,
+    )
     summary = {
         "artifact_status": "complete_characterization_pending_acceptance_policy",
         "repair_classification": "D_MIXED_RUNTIME_AND_IMPLEMENTATION_EFFECT",
